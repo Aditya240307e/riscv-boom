@@ -16,12 +16,13 @@
 // Ren1 data is provided as an output to be fed directly into the ROB.
 
 package boom.v4.exu
-
+import boom.v4.common.constants._
 import chisel3._
 import chisel3.util._
 
 import freechips.rocketchip.util._
 import org.chipsalliance.cde.config.Parameters
+import boom.v4.common.VetoInstructions._
 import boom.v4.common._
 import boom.v4.util._
 
@@ -190,6 +191,22 @@ class RenameStage(
       bypassed_uop
     }
   }
+    // The TMT table (tags the current taint state of all the registers)
+    val taint_reg_table = RegInit(0.U(numPhysRegs.W))
+    val tmt_snapshots = Reg(Vec(maxBrCount, UInt(numPhysRegs.W)))
+
+    // Global Branch Mispredict Recovery:
+    val any_mispredict = io.brupdate.b1.mispredict_mask.orR
+    val mispredict_tag = PriorityEncoder(io.brupdate.b1.mispredict_mask)
+
+    //Initial TMT state 
+    when(any_mispredict) {
+      taint_reg_table := tmt_snapshots(mispredict_tag)
+    }
+    var cumulative_tmt = Mux(any_mispredict, tmt_snapshots(mispredict_tag), taint_reg_table)
+
+
+  
 
   //-------------------------------------------------------------
   // Rename Structures
@@ -329,20 +346,51 @@ class RenameStage(
     assert (!(valid && busy.prs2_busy && rtype === RT_FIX && uop.lrs2_rtype === RT_FIX && uop.lrs2 === 0.U), "[rename] x0 is busy??")
   }
 
-  //-------------------------------------------------------------
-  // Outputs
+
+  // Final output to  ensure the is_tainted bit isn't overwritten.
 
   for (w <- 0 until plWidth) {
     val can_allocate = freelist.io.alloc_pregs(w).valid
 
-    // Push back against Decode stage if Rename1 can't proceed.
+    //Original Stall Logic
     io.ren_stalls(w) := (ren2_uops(w).dst_rtype === rtype) && !can_allocate
 
-    val bypassed_uop = Wire(new MicroOp)
-    bypassed_uop := BypassAllocations(ren2_uops(w), ren2_uops.take(w), ren2_alloc_reqs.take(w))
+    //The Final Renamed & Bypassed MicroOp
+    val final_uop = GetNewUopAndBrMask(
+      BypassAllocations(ren2_uops(w), ren2_uops.take(w), ren2_alloc_reqs.take(w)), 
+      io.brupdate
+    )
 
-    io.ren2_uops(w) := GetNewUopAndBrMask(bypassed_uop, io.brupdate)
+    //Veto Taint Logic
+    //We check the TMT using the ACTUAL Physical Register assigned by the MapTable.
+    val s1_tainted = cumulative_tmt(final_uop.prs1)
+    val s2_tainted = cumulative_tmt(final_uop.prs2)
+    val is_veto_op = (final_uop.inst === VETO)
+
+    // A uop is tainted if its sources are tainted OR it is a VETO instruction.
+    val current_uop_tainted = (s1_tainted || s2_tainted || is_veto_op) && ren2_valids(w)
+    
+    io.ren2_uops(w) := final_uop
+    io.ren2_uops(w).is_tainted := current_uop_tainted
+
+    //Update the Cumulative TMT for the next lane in this cycle
+    val pdst_mask = 1.U << final_uop.pdst
+    when(final_uop.dst_rtype =/= RT_X && final_uop.pdst =/= 0.U && ren2_valids(w)) {
+      cumulative_tmt = Mux(current_uop_tainted, 
+                           cumulative_tmt | pdst_mask, 
+                           cumulative_tmt & ~pdst_mask)
+    }
+
+    //Snapshot the TMT if this is a branch
+    when(final_uop.is_br && ren2_valids(w) && !any_mispredict) {
+      tmt_snapshots(final_uop.br_tag) := cumulative_tmt
+    }
+
+    io.ren2_mask(w) := ren2_valids(w)
   }
+
+  // Write back the final cumulative state to the register for the next cycle
+  taint_reg_table := cumulative_tmt
 
 }
 
