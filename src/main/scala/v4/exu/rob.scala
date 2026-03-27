@@ -58,6 +58,9 @@ class RobIo(
   val rob_pnr_idx  = Output(UInt(robAddrSz.W))
   val rob_head_idx = Output(UInt(robAddrSz.W))
 
+  val sidecar_wb = Flipped(Valid(new Bundle { val rob_idx = UInt(robAddrSz.W)}))
+
+
   // Handle Branch Misspeculations
   val brupdate = Input(new BrUpdateInfo())
 
@@ -205,6 +208,7 @@ class Rob(
   // ROB Finite State Machine
   val s_reset :: s_normal :: s_wait_till_empty :: s_rollback :: Nil = Enum(4)
   val rob_state = RegInit(s_reset)
+
 
   //commit entries at the head, and unwind exceptions from the tail
   val rob_head     = RegInit(0.U(log2Ceil(numRobRows).W))
@@ -357,6 +361,8 @@ class Rob(
     // one bank
     val rob_val       = RegInit(VecInit(Seq.fill(numRobRows){false.B}))
     val rob_bsy       = Reg(Vec(numRobRows, Bool()))
+    val rob_is_in_sidecar = RegInit(VecInit(Seq.fill(numRobRows){false.B}))
+    val rob_sidecar_done  = RegInit(VecInit(Seq.fill(numRobRows){false.B}))
     val rob_unsafe    = Reg(Vec(numRobRows, Bool()))
     val rob_uop       = Reg(Vec(numRobRows, new MicroOp()))
     val rob_exception = Reg(Vec(numRobRows, Bool()))
@@ -380,6 +386,8 @@ class Rob(
       rob_predicated(rob_tail)   := false.B
       rob_fflags(rob_tail).valid := false.B
       rob_fflags(rob_tail).bits  := 0.U
+      rob_is_in_sidecar(rob_tail) := io.enq_uops(w).is_tainted
+      rob_sidecar_done(rob_tail) := false.B
 
       assert (rob_val(rob_tail) === false.B, "[rob] overwriting a valid entry.")
       assert ((io.enq_uops(w).rob_idx >> log2Ceil(coreWidth)) === rob_tail)
@@ -406,6 +414,15 @@ class Rob(
 
         }
       }
+    }
+    when (io.sidecar_wb.valid && MatchBank(GetBankIdx(io.sidecar_wb.bits.rob_idx))) {
+      val row_idx = GetRowIdx(io.sidecar_wb.bits.rob_idx)
+
+      rob_sidecar_done(row_idx) := true.B
+
+      rob_bsy(row_idx) := false.B
+      rob_unsafe(row_idx) := false.B
+      assert(rob_val(row_idx) === true.B, "[rob] Sidecar writeback to an invalid ROB entry")
     }
 
     // Stores have a separate method to clear busy bits
@@ -448,7 +465,12 @@ class Rob(
 
     // Can this instruction commit? (the check for exceptions/rob_state happens later).
     // Block commit if there is mispredict
-    can_commit(w) := rob_val(rob_head) && !(rob_bsy(rob_head)) && !io.csr_stall && !io.brupdate.b2.mispredict
+    // can_commit(w) := rob_val(rob_head) && !(rob_bsy(rob_head)) && !io.csr_stall && !io.brupdate.b2.mispredict
+    
+    val head_is_sidecar = rob_is_in_sidecar(rob_head)
+    val head_sidecar_ready = rob_sidecar_done(rob_head)
+
+    can_commit(w) := rob_val(rob_head) && Mux(head_is_sidecar, head_sidecar_ready, !rob_bsy(rob_head) && !io.csr_stall && !io.brupdate.b2.mispredict)
 
 
     // use the same "com_uop" for both rollback AND commit

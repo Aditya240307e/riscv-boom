@@ -68,6 +68,11 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters) extends Bo
   io.ptw := DontCare
   io.ifu := DontCare
 
+  val reg_veto_enable = RegInit(false.B)
+  val csr_cmd_valid = csr.io.rw.cmd =/= freechips.rocketchip.rocket.CSR.N
+  when(csr_cmd_valid && csr.io.rw.addr === 0x800.U) {
+    reg_veto_enable := csr.io.rw.wdata(0)
+  }
   //**********************************
   // construct all of the modules
 
@@ -119,6 +124,8 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters) extends Bo
   val pred_rename_stage = Module(new PredRenameStage(coreWidth, 1))
   val imm_rename_stage  = Module(new ImmRenameStage(coreWidth, numImmReaders)) // wakeup ports used when insts read imm
   val rename_stages     = Seq(rename_stage, pred_rename_stage, imm_rename_stage) ++ (if (usingFPU) Seq(fp_rename_stage) else Nil)
+
+  val sidecar_merger = Module(new SidecarMerger)
 
   val mem_iss_unit     = IssueUnit(memIssueParam, numIntWakeups, false, false)
   val unq_iss_unit     = IssueUnit(unqIssueParam, numIntWakeups, false, false)
@@ -769,6 +776,19 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters) extends Bo
   dis_fire := dis_valids zip dis_stalls map {case (v,s) => v && !s}
   dis_ready := !dis_stalls.last
 
+
+  for (w <- 0 until coreWidth) {
+    val uop = dis_uops(w)
+    val steered_uop = WireInit(uop)
+    when (reg_veto_enable && uop.is_tainted) {
+      steered_uop.iq_type := IQ_VETO.U
+    }
+
+    dispatcher.io.ren_uops(w).bits  := steered_uop
+    dispatcher.io.ren_uops(w).valid := dis_fire(w)
+  }
+
+
   //-------------------------------------------------------------
   // LDQ/STQ Allocation Logic
 
@@ -821,6 +841,11 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters) extends Bo
 
   // Get uops from rename2
   for (w <- 0 until coreWidth) {
+
+    val uop = rename_stage.io.ren2_uops(w)
+    val final_uop = WireInit(uop)
+    final_uop.is_tainted := uop.is_tainted && reg_veto_enable
+
     dispatcher.io.ren_uops(w).valid := dis_fire(w)
     dispatcher.io.ren_uops(w).bits  := dis_uops(w)
   }
@@ -952,9 +977,14 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters) extends Bo
 
 
   // loop through each issue-port (exe_units are statically connected to an issue-port)
+  //OPTIM: can we do better?
   for (i <- 0 until aluWidth) {
     val unit = alu_exe_units(i)
     val fast_wakeup = unit.io_fast_wakeup
+
+    if (i == 0) {
+      sidecar_merger.io.main_wb_valid := unit.io_alu_resp.valid
+    }
 
     int_bypasses(bypass_idx).valid := unit.io_alu_resp.valid && unit.io_alu_resp.bits.uop.dst_rtype === RT_FIX
     int_bypasses(bypass_idx).bits  := unit.io_alu_resp.bits
@@ -966,15 +996,32 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters) extends Bo
     rob.io.wb_resps(wb_idx).valid  := RegNext(unit.io_alu_resp.valid && !IsKilledByBranch(brupdate, RegNext(rob.io.flush.valid), unit.io_alu_resp.bits))
     rob.io.wb_resps(wb_idx).bits   := RegNext(unit.io_alu_resp.bits)
 
-    iregfile.io.write_ports(wb_idx).valid     := unit.io_alu_resp.valid && unit.io_alu_resp.bits.uop.dst_rtype === RT_FIX
-    iregfile.io.write_ports(wb_idx).bits.addr := unit.io_alu_resp.bits.uop.pdst
-    iregfile.io.write_ports(wb_idx).bits.data := unit.io_alu_resp.bits.data
+    //Connect to the PRF
+    if (i == 0) {
+      // Hijack the first write port for the Sidecar if it's stealing a cycle
+      when (sidecar_merger.io.out_wb.valid) {
+        iregfile.io.write_ports(wb_idx).valid      := true.B
+        iregfile.io.write_ports(wb_idx).bits.addr  := sidecar_merger.io.out_wb.bits.uop.pdst
+        iregfile.io.write_ports(wb_idx).bits.data  := sidecar_merger.io.out_wb.bits.data
+      } .otherwise {
+        // Original ALU logic
+        iregfile.io.write_ports(wb_idx).valid      := unit.io_alu_resp.valid && unit.io_alu_resp.bits.uop.dst_rtype === RT_FIX
+        iregfile.io.write_ports(wb_idx).bits.addr  := unit.io_alu_resp.bits.uop.pdst
+        iregfile.io.write_ports(wb_idx).bits.data  := unit.io_alu_resp.bits.data
+      }
+    } else {
+      // Standard connection for all other ALUs
+      iregfile.io.write_ports(wb_idx).valid      := unit.io_alu_resp.valid && unit.io_alu_resp.bits.uop.dst_rtype === RT_FIX
+      iregfile.io.write_ports(wb_idx).bits.addr  := unit.io_alu_resp.bits.uop.pdst
+      iregfile.io.write_ports(wb_idx).bits.data  := unit.io_alu_resp.bits.data
+    }
+
     wb_idx += 1
-
     pred_wakeups(i) := unit.io_fast_pred_wakeup
-
-
   }
+
+  rob.io.sidecar_wb.valid := sidecar_merger.io.rob_done.valid
+  rob.io.sidecar_wb.bits.rob_idx := sidecar_merger.io.rob_done.bits.rob_idx
   require (wu_idx == numIntWakeups)
   require (wb_idx == numIrfWritePorts)
 

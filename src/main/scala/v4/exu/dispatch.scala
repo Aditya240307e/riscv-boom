@@ -29,6 +29,11 @@ class DispatchIO(implicit p: Parameters) extends BoomBundle
   // N issues each accept up to dispatchWidth uops
   // dispatchWidth may vary between issue queues
   val dis_uops = MixedVec(issueParams.map(ip=>Vec(ip.dispatchWidth, DecoupledIO(new MicroOp))))
+
+  // Global control signal to enable/disable the SSI logic 
+  // when true, the uops tagged tainted are moved into the inorder lane 
+  // TODO: Doesn't this requre a specific logic or something for the Register File port contention
+  val veto_enable = Input(Bool())
 }
 
 abstract class Dispatcher(implicit p: Parameters) extends BoomModule
@@ -43,7 +48,7 @@ abstract class Dispatcher(implicit p: Parameters) extends BoomModule
 class BasicDispatcher(implicit p: Parameters) extends Dispatcher
 {
   issueParams.map(ip=>require(ip.dispatchWidth == coreWidth))
-
+  // TODO: Make ren_readys aware of the vetoed status
   val ren_readys = io.dis_uops.map(d=>VecInit(d.map(_.ready)).asUInt).reduce(_&_)
 
   for (w <- 0 until coreWidth) {
@@ -54,7 +59,13 @@ class BasicDispatcher(implicit p: Parameters) extends Dispatcher
        w <- 0 until coreWidth} {
     val issueParam = issueParams(i)
     val dis        = io.dis_uops(i)
+    val uop = io.ren_uops(w).bits
+    val is_vetoed = uop.is_tainted && io.veto_enable
 
+
+    val target_iq_type = Mux(is_vetoed, (1 << IQ_VETO()).U, uop.iq_type)
+
+  
     dis(w).valid := io.ren_uops(w).valid && io.ren_uops(w).bits.iq_type(issueParam.iqType)
     dis(w).bits  := io.ren_uops(w).bits
   }
@@ -75,11 +86,19 @@ class CompactingDispatcher(implicit p: Parameters) extends Dispatcher
 
   for (((ip, dis), rdy) <- issueParams zip io.dis_uops zip ren_readys) {
     val ren = Wire(Vec(coreWidth, Decoupled(new MicroOp)))
-    ren <> io.ren_uops
+    //TODO: Manual wiring instead of 'ren <> io.ren_uops' to apply the mask override
+    for (w <- 0 until coreWidth) {
+      ren(w).bits := io.ren_uops(w).bits
+    }
 
-    val uses_iq = ren map (u => u.bits.iq_type(ip.iqType))
+    val uses_iq = io.ren_uops map { u =>
+      val is_vetoed = u.bits.is_tainted && io.veto_enable
+      // If vetoed, mask is ONLY bit 4 (IQ_VETO). Otherwise, use original mask.
+      val effective_mask = Mux(is_vetoed, (1 << IQ_VETO).U, u.bits.iq_type)
+      effective_mask(ip.iqType)
+    }
 
-    // Only request an issue slot if the uop needs to enter that queue.
+    // Only request an issue slot if the uop needs to enter THIS specific queue.
     (ren zip io.ren_uops zip uses_iq) foreach {case ((u,v),q) =>
       u.valid := v.valid && q}
 
@@ -87,10 +106,11 @@ class CompactingDispatcher(implicit p: Parameters) extends Dispatcher
     compactor.io.in  <> ren
     dis <> compactor.io.out
 
-    // The queue is considered ready if the uop doesn't use it.
+    //The queue is considered ready if the uop doesn't use it.
     rdy := ren zip uses_iq map {case (u,q) => u.ready || !q}
   }
 
+  // Combine readys: Rename only stalls if the instruction's SPECIFIC target is full.
   (ren_readys.reduce((r,i) =>
       VecInit(r zip i map {case (r,i) =>
         r && i})) zip io.ren_uops) foreach {case (r,u) =>

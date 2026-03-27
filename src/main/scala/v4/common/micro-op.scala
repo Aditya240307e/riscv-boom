@@ -149,6 +149,8 @@ class MicroOp(implicit p: Parameters) extends BoomBundle
   val bp_debug_if      = Bool()             // Breakpoint
   val bp_xcpt_if       = Bool()             // Breakpoint
 
+  // Check if the bit is tainted or not
+  val is_tainted       = Bool()
 
   // What prediction structure provides the prediction FROM this op
   val debug_fsrc       = UInt(BSRC_SZ.W)
