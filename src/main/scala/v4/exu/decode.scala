@@ -741,6 +741,7 @@ object DecodeTables
     LW -> List(
       Y,
       N,
+      N,
       fc2oh(FC_AGEN),
       RT_FIX,
       RT_FIX,
@@ -775,6 +776,7 @@ object DecodeTables
     ),
     LH -> List(
       Y,
+      N,
       N,
       fc2oh(FC_AGEN),
       RT_FIX,
@@ -811,6 +813,7 @@ object DecodeTables
     LHU -> List(
       Y,
       N,
+      N,
       fc2oh(FC_AGEN),
       RT_FIX,
       RT_FIX,
@@ -846,6 +849,7 @@ object DecodeTables
     LB -> List(
       Y,
       N,
+      N,
       fc2oh(FC_AGEN),
       RT_FIX,
       RT_FIX,
@@ -880,6 +884,7 @@ object DecodeTables
     ),
     LBU -> List(
       Y,
+      N,
       N,
       fc2oh(FC_AGEN),
       RT_FIX,
@@ -917,6 +922,7 @@ object DecodeTables
     SW -> List(
       Y,
       N,
+      N,
       FCOH_STORE,
       RT_X,
       RT_FIX,
@@ -952,6 +958,7 @@ object DecodeTables
     SH -> List(
       Y,
       N,
+      N,
       FCOH_STORE,
       RT_X,
       RT_FIX,
@@ -986,6 +993,7 @@ object DecodeTables
     ),
     SB -> List(
       Y,
+      N,
       N,
       FCOH_STORE,
       RT_X,
@@ -1023,6 +1031,7 @@ object DecodeTables
     LUI -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_FIX,
       RT_X,
@@ -1059,6 +1068,7 @@ object DecodeTables
     ADDI -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_FIX,
       RT_FIX,
@@ -1093,6 +1103,7 @@ object DecodeTables
     ),
     ANDI -> List(
       Y,
+      N,
       N,
       fc2oh(FC_ALU),
       RT_FIX,
@@ -1129,6 +1140,7 @@ object DecodeTables
     ORI -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_FIX,
       RT_FIX,
@@ -1163,6 +1175,7 @@ object DecodeTables
     ),
     XORI -> List(
       Y,
+      N,
       N,
       fc2oh(FC_ALU),
       RT_FIX,
@@ -1199,6 +1212,7 @@ object DecodeTables
     SLTI -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_FIX,
       RT_FIX,
@@ -1233,6 +1247,7 @@ object DecodeTables
     ),
     SLTIU -> List(
       Y,
+      N,
       N,
       fc2oh(FC_ALU),
       RT_FIX,
@@ -1270,6 +1285,7 @@ object DecodeTables
     SLL -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_FIX,
       RT_FIX,
@@ -1304,6 +1320,7 @@ object DecodeTables
     ),
     ADD -> List(
       Y,
+      N,
       N,
       fc2oh(FC_ALU),
       RT_FIX,
@@ -1340,6 +1357,7 @@ object DecodeTables
     SUB -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_FIX,
       RT_FIX,
@@ -1374,6 +1392,7 @@ object DecodeTables
     ),
     SLT -> List(
       Y,
+      N,
       N,
       fc2oh(FC_ALU),
       RT_FIX,
@@ -1410,6 +1429,7 @@ object DecodeTables
     SLTU -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_FIX,
       RT_FIX,
@@ -1444,6 +1464,7 @@ object DecodeTables
     ),
     AND -> List(
       Y,
+      N,
       N,
       fc2oh(FC_ALU),
       RT_FIX,
@@ -1480,6 +1501,7 @@ object DecodeTables
     OR -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_FIX,
       RT_FIX,
@@ -1514,6 +1536,7 @@ object DecodeTables
     ),
     XOR -> List(
       Y,
+      N,
       N,
       fc2oh(FC_ALU),
       RT_FIX,
@@ -1550,6 +1573,7 @@ object DecodeTables
     SRA -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_FIX,
       RT_FIX,
@@ -1584,6 +1608,7 @@ object DecodeTables
     ),
     SRL -> List(
       Y,
+      N,
       N,
       fc2oh(FC_ALU),
       RT_FIX,
@@ -1621,6 +1646,7 @@ object DecodeTables
     MUL -> List(
       Y,
       N,
+      N,
       fc2oh(FC_MUL),
       RT_FIX,
       RT_FIX,
@@ -1655,6 +1681,7 @@ object DecodeTables
     ),
     MULH -> List(
       Y,
+      N,
       N,
       fc2oh(FC_MUL),
       RT_FIX,
@@ -1691,6 +1718,7 @@ object DecodeTables
     MULHU -> List(
       Y,
       N,
+      N,
       fc2oh(FC_MUL),
       RT_FIX,
       RT_FIX,
@@ -1725,6 +1753,7 @@ object DecodeTables
     ),
     MULHSU -> List(
       Y,
+      N,
       N,
       fc2oh(FC_MUL),
       RT_FIX,
@@ -1761,6 +1790,7 @@ object DecodeTables
     MULW -> List(
       Y,
       N,
+      N,
       fc2oh(FC_MUL),
       RT_FIX,
       RT_FIX,
@@ -1795,6 +1825,7 @@ object DecodeTables
     ),
 
     VetoInstructions.VETO -> List(
+      Y,
       Y,
       N,
       fc2oh(FC_AGEN),
@@ -1833,6 +1864,7 @@ object DecodeTables
     DIV -> List(
       Y,
       N,
+      N,
       fc2oh(FC_DIV),
       RT_FIX,
       RT_FIX,
@@ -1867,6 +1899,7 @@ object DecodeTables
     ),
     DIVU -> List(
       Y,
+      N,
       N,
       fc2oh(FC_DIV),
       RT_FIX,
@@ -1903,6 +1936,7 @@ object DecodeTables
     REM -> List(
       Y,
       N,
+      N,
       fc2oh(FC_DIV),
       RT_FIX,
       RT_FIX,
@@ -1937,6 +1971,7 @@ object DecodeTables
     ),
     REMU -> List(
       Y,
+      N,
       N,
       fc2oh(FC_DIV),
       RT_FIX,
@@ -1973,6 +2008,7 @@ object DecodeTables
     DIVW -> List(
       Y,
       N,
+      N,
       fc2oh(FC_DIV),
       RT_FIX,
       RT_FIX,
@@ -2007,6 +2043,7 @@ object DecodeTables
     ),
     DIVUW -> List(
       Y,
+      N,
       N,
       fc2oh(FC_DIV),
       RT_FIX,
@@ -2043,6 +2080,7 @@ object DecodeTables
     REMW -> List(
       Y,
       N,
+      N,
       fc2oh(FC_DIV),
       RT_FIX,
       RT_FIX,
@@ -2077,6 +2115,7 @@ object DecodeTables
     ),
     REMUW -> List(
       Y,
+      N,
       N,
       fc2oh(FC_DIV),
       RT_FIX,
@@ -2114,6 +2153,7 @@ object DecodeTables
     AUIPC -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_FIX,
       RT_X,
@@ -2148,6 +2188,7 @@ object DecodeTables
     ), // use BRU for the PC read
     JAL -> List(
       Y,
+      N,
       N,
       fc2oh(FC_ALU),
       RT_FIX,
@@ -2184,6 +2225,7 @@ object DecodeTables
     JALR -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_FIX,
       RT_FIX,
@@ -2218,6 +2260,7 @@ object DecodeTables
     ),
     BEQ -> List(
       Y,
+      N,
       N,
       fc2oh(FC_ALU),
       RT_X,
@@ -2254,6 +2297,7 @@ object DecodeTables
     BNE -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_X,
       RT_FIX,
@@ -2288,6 +2332,7 @@ object DecodeTables
     ),
     BGE -> List(
       Y,
+      N,
       N,
       fc2oh(FC_ALU),
       RT_X,
@@ -2324,6 +2369,7 @@ object DecodeTables
     BGEU -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_X,
       RT_FIX,
@@ -2359,6 +2405,7 @@ object DecodeTables
     BLT -> List(
       Y,
       N,
+      N,
       fc2oh(FC_ALU),
       RT_X,
       RT_FIX,
@@ -2393,6 +2440,7 @@ object DecodeTables
     ),
     BLTU -> List(
       Y,
+      N,
       N,
       fc2oh(FC_ALU),
       RT_X,
@@ -2431,6 +2479,7 @@ object DecodeTables
     CSRRW -> List(
       Y,
       N,
+      N,
       fc2oh(FC_CSR),
       RT_FIX,
       RT_FIX,
@@ -2466,6 +2515,7 @@ object DecodeTables
     CSRRS -> List(
       Y,
       N,
+      N,
       fc2oh(FC_CSR),
       RT_FIX,
       RT_FIX,
@@ -2500,6 +2550,7 @@ object DecodeTables
     ),
     CSRRC -> List(
       Y,
+      N,
       N,
       fc2oh(FC_CSR),
       RT_FIX,
@@ -2537,6 +2588,7 @@ object DecodeTables
     CSRRWI -> List(
       Y,
       N,
+      N,
       fc2oh(FC_CSR),
       RT_FIX,
       RT_X,
@@ -2572,6 +2624,7 @@ object DecodeTables
     CSRRSI -> List(
       Y,
       N,
+      N,
       fc2oh(FC_CSR),
       RT_FIX,
       RT_X,
@@ -2606,6 +2659,7 @@ object DecodeTables
     ),
     CSRRCI -> List(
       Y,
+      N,
       N,
       fc2oh(FC_CSR),
       RT_FIX,
@@ -2643,6 +2697,7 @@ object DecodeTables
     SFENCE_VMA -> List(
       Y,
       N,
+      N,
       fc2oh(FC_CSR),
       RT_X,
       RT_FIX,
@@ -2677,6 +2732,7 @@ object DecodeTables
     ),
     ECALL -> List(
       Y,
+      N,
       N,
       fc2oh(FC_CSR),
       RT_X,
@@ -2713,6 +2769,7 @@ object DecodeTables
     EBREAK -> List(
       Y,
       N,
+      N,
       fc2oh(FC_CSR),
       RT_X,
       RT_X,
@@ -2747,6 +2804,7 @@ object DecodeTables
     ),
     SRET -> List(
       Y,
+      N,
       N,
       fc2oh(FC_CSR),
       RT_X,
@@ -2783,6 +2841,7 @@ object DecodeTables
     MRET -> List(
       Y,
       N,
+      N,
       fc2oh(FC_CSR),
       RT_X,
       RT_X,
@@ -2817,6 +2876,7 @@ object DecodeTables
     ),
     DRET -> List(
       Y,
+      N,
       N,
       fc2oh(FC_CSR),
       RT_X,
@@ -2854,6 +2914,7 @@ object DecodeTables
     WFI -> List(
       Y,
       N,
+      N,
       fc2oh(FC_CSR),
       RT_X,
       RT_X,
@@ -2890,6 +2951,7 @@ object DecodeTables
     FENCE_I -> List(
       Y,
       N,
+      N,
       0.U(FC_SZ.W),
       RT_X,
       RT_X,
@@ -2924,6 +2986,7 @@ object DecodeTables
     ),
     FENCE -> List(
       Y,
+      N,
       N,
       0.U(FC_SZ.W),
       RT_X,
@@ -2962,6 +3025,7 @@ object DecodeTables
     AMOADD_W -> List(
       Y,
       N,
+      N,
       FCOH_STORE,
       RT_FIX,
       RT_FIX,
@@ -2996,6 +3060,7 @@ object DecodeTables
     ), // TODO make AMOs higherperformance
     AMOXOR_W -> List(
       Y,
+      N,
       N,
       FCOH_STORE,
       RT_FIX,
@@ -3032,6 +3097,7 @@ object DecodeTables
     AMOSWAP_W -> List(
       Y,
       N,
+      N,
       FCOH_STORE,
       RT_FIX,
       RT_FIX,
@@ -3066,6 +3132,7 @@ object DecodeTables
     ),
     AMOAND_W -> List(
       Y,
+      N,
       N,
       FCOH_STORE,
       RT_FIX,
@@ -3102,6 +3169,7 @@ object DecodeTables
     AMOOR_W -> List(
       Y,
       N,
+      N,
       FCOH_STORE,
       RT_FIX,
       RT_FIX,
@@ -3136,6 +3204,7 @@ object DecodeTables
     ),
     AMOMIN_W -> List(
       Y,
+      N,
       N,
       FCOH_STORE,
       RT_FIX,
@@ -3172,6 +3241,7 @@ object DecodeTables
     AMOMINU_W -> List(
       Y,
       N,
+      N,
       FCOH_STORE,
       RT_FIX,
       RT_FIX,
@@ -3207,6 +3277,7 @@ object DecodeTables
     AMOMAX_W -> List(
       Y,
       N,
+      N,
       FCOH_STORE,
       RT_FIX,
       RT_FIX,
@@ -3241,6 +3312,7 @@ object DecodeTables
     ),
     AMOMAXU_W -> List(
       Y,
+      N,
       N,
       FCOH_STORE,
       RT_FIX,
@@ -3278,6 +3350,7 @@ object DecodeTables
     AMOADD_D -> List(
       Y,
       N,
+      N,
       FCOH_STORE,
       RT_FIX,
       RT_FIX,
@@ -3312,6 +3385,7 @@ object DecodeTables
     ),
     AMOXOR_D -> List(
       Y,
+      N,
       N,
       FCOH_STORE,
       RT_FIX,
@@ -3348,6 +3422,7 @@ object DecodeTables
     AMOSWAP_D -> List(
       Y,
       N,
+      N,
       FCOH_STORE,
       RT_FIX,
       RT_FIX,
@@ -3382,6 +3457,7 @@ object DecodeTables
     ),
     AMOAND_D -> List(
       Y,
+      N,
       N,
       FCOH_STORE,
       RT_FIX,
@@ -3418,6 +3494,7 @@ object DecodeTables
     AMOOR_D -> List(
       Y,
       N,
+      N,
       FCOH_STORE,
       RT_FIX,
       RT_FIX,
@@ -3452,6 +3529,7 @@ object DecodeTables
     ),
     AMOMIN_D -> List(
       Y,
+      N,
       N,
       FCOH_STORE,
       RT_FIX,
@@ -3488,6 +3566,7 @@ object DecodeTables
     AMOMINU_D -> List(
       Y,
       N,
+      N,
       FCOH_STORE,
       RT_FIX,
       RT_FIX,
@@ -3523,6 +3602,7 @@ object DecodeTables
     AMOMAX_D -> List(
       Y,
       N,
+      N,
       FCOH_STORE,
       RT_FIX,
       RT_FIX,
@@ -3557,6 +3637,7 @@ object DecodeTables
     ),
     AMOMAXU_D -> List(
       Y,
+      N,
       N,
       FCOH_STORE,
       RT_FIX,
@@ -3594,6 +3675,7 @@ object DecodeTables
     LR_W -> List(
       Y,
       N,
+      N,
       fc2oh(FC_AGEN),
       RT_FIX,
       RT_FIX,
@@ -3628,6 +3710,7 @@ object DecodeTables
     ),
     LR_D -> List(
       Y,
+      N,
       N,
       fc2oh(FC_AGEN),
       RT_FIX,
@@ -3664,6 +3747,7 @@ object DecodeTables
     SC_W -> List(
       Y,
       N,
+      N,
       FCOH_STORE,
       RT_FIX,
       RT_FIX,
@@ -3698,6 +3782,7 @@ object DecodeTables
     ),
     SC_D -> List(
       Y,
+      N,
       N,
       FCOH_STORE,
       RT_FIX,
@@ -8179,7 +8264,7 @@ object DecodeTables
   */
 class CtrlSigs(implicit p: Parameters) extends Bundle {
   val legal = Bool()
-  val is_tainted = Bool
+  val is_tainted = Bool()
   val fp_val = Bool()
   val fu_code = UInt(FC_SZ.W)
   val dst_type = UInt(2.W)
@@ -8206,6 +8291,7 @@ class CtrlSigs(implicit p: Parameters) extends Bundle {
     )
     val sigs = Seq(
       legal,
+      is_tainted,
       fp_val,
       fu_code,
       dst_type,

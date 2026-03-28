@@ -429,7 +429,7 @@ class RenameStage(
   }
 
   var commit_cleared_tmt = cumulative_tmt
-  for (w <- plWidth) {
+  for (w <- 0 until plWidth) {
     // check if a physical register is being retired this cycle
     when(io.com_valids(w) && io.com_uops(w).dst_rtype === RT_FIX) {
       val stale_pdst_mask = ~(1.U << io.com_uops(w).stale_pdst)

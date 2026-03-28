@@ -44,6 +44,7 @@
 package boom.v4.lsu
 
 import chisel3._
+import chisel3.Bundle
 import chisel3.util._
 
 import org.chipsalliance.cde.config.Parameters
@@ -62,7 +63,6 @@ import boom.v4.exu.{
 }
 import boom.v4.exu._
 import boom.v4.util._
-import boom.v3.util.IsKilledByBranch
 
 class BoomDCacheReq(implicit p: Parameters)
     extends BoomBundle()(p)
@@ -149,10 +149,10 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p) {
 
   val brupdate = Input(new BrUpdateInfo)
 
-  val veto_release = Input(new Valid(Bundle {
-    val rob_idx = UInt(robAddrSz.W)
-    val br_tag = UInt(brTagAddrSz.W)
-  }))
+  val veto_release = IO(Input(Valid(new Bundle {
+    val br_tag = UInt(brTagSz.W)
+  })))
+
   val side_car_dis_uop = Output(Valid(new MicroOp))
   val rob_pnr_idx = Input(UInt(robAddrSz.W))
   val rob_head_idx = Input(UInt(robAddrSz.W))
@@ -185,7 +185,7 @@ class LSUIO(implicit p: Parameters, edge: TLEdgeOut) extends BoomBundle()(p) {
 }
 
 class LDQEntry(implicit p: Parameters) extends BoomBundle()(p) with HasBoomUOP {
-  val uop = new MicroOp()
+  override val uop = new MicroOp()
 
   val is_tainted = Bool()
   val veto_stall = Bool()
@@ -502,18 +502,22 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
     )
   }
 
-  val dis_tainted_vals = widthMap(w =>
-    io.core.dis_uops(w).valid && io.core
-      .dis_uops(w)
-      .bits
-      .is_tainted && io.core.dis_uops.bits.uses_ldq
+  // 1. Generate the boolean flags for each dispatch slot
+  val dis_tainted_vals = (0 until decodeWidth).map(w =>
+    io.core.dis_uops(w).valid &&
+      io.core.dis_uops(w).bits.is_tainted &&
+      io.core.dis_uops(w).bits.uses_ldq
   )
-  val dis_tainted_uops = widthMap(w => io.core.dis_uops(w).bits)
 
+  // 2. Determine if any slot is a "winner" for the Sidecar
+  val any_tainted_dis = dis_tainted_vals.reduce(_ || _)
   val sidecar_winner_idx = PriorityEncoder(dis_tainted_vals)
 
-  io.core.side_car_dis_uop.valid := dis_tainted_vals.reduce(_ || _)
-  io.core.side_car_dis_uop.bits := dis_tainted_uops(sidecar_winner_idx)
+  // 3. Assign to the Sidecar Unit interface
+  io.core.side_car_dis_uop.valid := any_tainted_dis
+
+  // Use a Mux or index into the Vec safely
+  io.core.side_car_dis_uop.bits := io.core.dis_uops(sidecar_winner_idx).bits
 
   ldq_tail := ld_enq_idx
   stq_tail := st_enq_idx

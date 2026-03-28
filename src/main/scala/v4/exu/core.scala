@@ -1197,14 +1197,18 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     if (i == 0) {
       sidecar_merger.io.main_wb_valid := unit.io_alu_resp.valid
 
-      sidecar_unit.io.iss_resps.rs1_data := alu_iss_unit.io
-        .iss_uops(0)
-        .bits
-        .rs1_data
-      sidecar_unit.io.iss_resps.rs2_data := alu_iss_unit.io
-        .iss_uops(0)
-        .bits
-        .rs2_data
+      // Access the data from the issue response/register read stage, not the uop bundle
+      sidecar_unit.io.iss_resps.rs1_data := unit.exe_rs1_data
+      sidecar_unit.io.iss_resps.rs2_data := unit.exe_rs2_data
+
+      when(unit.io_alu_resp.valid) {
+        printf(
+          "[SIDECAR_DATA] RS1: 0x%x, RS2: 0x%x, WB_Valid: %d\n",
+          unit.exe_rs1_data,
+          unit.exe_rs2_data,
+          sidecar_merger.io.main_wb_valid
+        )
+      }
     }
 
     int_bypasses(
