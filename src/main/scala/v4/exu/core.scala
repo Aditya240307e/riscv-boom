@@ -1265,6 +1265,15 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
       iregfile.io.write_ports(wb_idx).bits.data := unit.io_alu_resp.bits.data
     }
 
+    // FIXME: (Assuming you have 4 standard ALUs, indices 0-3, your Sidecar is 4)
+    for (iss_unit <- Seq(mem_iss_unit, alu_iss_unit, unq_iss_unit)) {
+      val wu_port =
+        iss_unit.io.wakeup_ports(iss_unit.io.wakeup_ports.length - 1)
+
+      wu_port.valid := sidecar_merger.io.out_wb.valid
+      wu_port.bits.uop.pdst := sidecar_merger.io.out_wb.bits.uop.pdst
+    }
+
     wb_idx += 1
     pred_wakeups(i) := unit.io_fast_pred_wakeup
   }

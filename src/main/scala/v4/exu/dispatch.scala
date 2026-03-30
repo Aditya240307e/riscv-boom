@@ -43,6 +43,8 @@ abstract class Dispatcher(implicit p: Parameters) extends BoomModule {
 /** This Dispatcher assumes worst case, all dispatched uops go to 1 issue queue
   * This is equivalent to BOOMv2 behavior
   */
+
+//TODO: Implement fallback execution for the InO Veto sidecar lane and stuff in CompactingDispatcher as well
 class BasicDispatcher(implicit p: Parameters) extends Dispatcher {
   issueParams.map(ip => require(ip.dispatchWidth == coreWidth))
   // TODO: Make ren_readys aware of the vetoed status
@@ -69,9 +71,13 @@ class BasicDispatcher(implicit p: Parameters) extends Dispatcher {
       .valid && io.ren_uops(w).bits.iq_type(issueParam.iqType)
     dis(w).bits := io.ren_uops(w).bits
 
+    val debug_cycle_count = RegInit(0.U(128.W))
+    debug_cycle_count := debug_cycle_count + 1.U
+
     when(io.ren_uops(w).fire && is_vetoed) {
       printf(
         "[DISPATCH_VETO] Cycle: %d, PC: 0x%x, Tainted: %d, IQ_Target: %d\n",
+        debug_cycle_count,
         uop.debug_pc,
         uop.is_tainted,
         target_iq_type.asUInt
