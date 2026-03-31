@@ -1185,8 +1185,39 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   wb_idx += 1
 
   val sidecar_unit = Module(new SidecarUnit)
+  val sidecar_read_port_idx = alu_exe_units.map(_.numIrfReadPorts).sum
   sidecar_unit.io.dis_uops <> dispatcher.io.dis_uops(IQ_VETO)
+
+  iregfile.io
+    .arb_read_reqs(sidecar_read_port_idx)
+    .valid := sidecar_unit.io.task_queue_head_valid
+  iregfile.io
+    .arb_read_reqs(sidecar_read_port_idx)
+    .bits := sidecar_unit.io.deq_uop.prs1
+  iregfile.io
+    .arb_read_reqs(sidecar_read_port_idx + 1)
+    .valid := sidecar_unit.io.task_queue_head_valid
+  iregfile.io
+    .arb_read_reqs(sidecar_read_port_idx + 1)
+    .bits := sidecar_unit.io.deq_uop.prs2
+
+  sidecar_unit.io.iss_resps.rs1_data := iregfile.io.rrd_read_resps(
+    sidecar_read_port_idx
+  )
+  sidecar_unit.io.iss_resps.rs2_data := iregfile.io.rrd_read_resps(
+    sidecar_read_port_idx + 1
+  )
+
+  sidecar_unit.io.iss_resps.rs1_ready := RegNext(
+    !sidecar_unit.io.deq_uop.prs1_busy
+  )
+  sidecar_unit.io.iss_resps.rs2_ready := RegNext(
+    !sidecar_unit.io.deq_uop.prs2_busy
+  )
+
+  sidecar_unit.io.br_update := io.ifu.brupdate
   sidecar_merger.io.sidecar_res <> sidecar_unit.io.sidecar_res
+  sidecar_merger.io.br_update := io.ifu.brupdate
 
   // loop through each issue-port (exe_units are statically connected to an issue-port)
   // OPTIM: can we do better?
@@ -1196,11 +1227,12 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
 
     if (i == 0) {
       sidecar_merger.io.main_wb_valid := unit.io_alu_resp.valid
-
-      // Access the data from the issue response/register read stage, not the uop bundle
-      sidecar_unit.io.iss_resps.rs1_data := unit.exe_rs1_data
-      sidecar_unit.io.iss_resps.rs2_data := unit.exe_rs2_data
-
+      when(sidecar_merger.io.out_wb.valid) {
+        int_wakeups(wu_idx).valid := true.B
+        int_wakeups(wu_idx).bits.uop := sidecar_merger.io.out_wb.bits.uop
+      }.otherwise {
+        int_wakeups(wu_idx) := fast_wakeup
+      }
       when(unit.io_alu_resp.valid) {
         printf(
           "[SIDECAR_DATA] RS1: 0x%x, RS2: 0x%x, WB_Valid: %d\n",
@@ -1209,6 +1241,8 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
           sidecar_merger.io.main_wb_valid
         )
       }
+    } else {
+      int_wakeups(wu_idx) := fast_wakeup
     }
 
     int_bypasses(
@@ -1217,7 +1251,8 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     int_bypasses(bypass_idx).bits := unit.io_alu_resp.bits
     bypass_idx += 1
 
-    int_wakeups(wu_idx) := fast_wakeup
+    // PERF: I have added the int_wakeups logic into the above if block, the following is the standard BOOM implementation
+    // int_wakeups(wu_idx) := fast_wakeup
     wu_idx += 1
 
     rob.io.wb_resps(wb_idx).valid := RegNext(
@@ -1265,17 +1300,17 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
       iregfile.io.write_ports(wb_idx).bits.data := unit.io_alu_resp.bits.data
     }
 
-    // FIXME: (Assuming you have 4 standard ALUs, indices 0-3, your Sidecar is 4)
-    for (iss_unit <- Seq(mem_iss_unit, alu_iss_unit, unq_iss_unit)) {
-      val wu_port =
-        iss_unit.io.wakeup_ports(iss_unit.io.wakeup_ports.length - 1)
-
-      wu_port.valid := sidecar_merger.io.out_wb.valid
-      wu_port.bits.uop.pdst := sidecar_merger.io.out_wb.bits.uop.pdst
-    }
-
     wb_idx += 1
     pred_wakeups(i) := unit.io_fast_pred_wakeup
+  }
+
+  // FIXME: (Assuming you have 4 standard ALUs, indices 0-3, your Sidecar is 4)
+  for (iss_unit <- Seq(mem_iss_unit, alu_iss_unit, unq_iss_unit)) {
+    val wu_port =
+      iss_unit.io.wakeup_ports(iss_unit.io.wakeup_ports.length - 1)
+
+    wu_port.valid := sidecar_merger.io.out_wb.valid
+    wu_port.bits.uop := sidecar_merger.io.out_wb.bits.uop
   }
 
   rob.io.sidecar_wb.valid := sidecar_merger.io.rob_done.valid
