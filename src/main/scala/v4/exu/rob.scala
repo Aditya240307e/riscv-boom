@@ -61,6 +61,9 @@ class RobIo(
   val rob_pnr_idx = Output(UInt(robAddrSz.W))
   val rob_head_idx = Output(UInt(robAddrSz.W))
 
+  val latch_shadow = Input(Bool())
+  val veto_restore = Input(Bool())
+
   val sidecar_wb = Flipped(Valid(new Bundle {
     val rob_idx = UInt(robAddrSz.W)
   }))
@@ -91,7 +94,7 @@ class RobIo(
 
   // Commit stage (free resources).
   val commit = Output(new CommitSignals())
-  val rollback = Bool()
+  val rollback = Output(Bool())
 
   // tell the LSU that the head of the ROB is a load
   // (some loads can only execute once they are at the head of the ROB).
@@ -220,6 +223,18 @@ class Rob(
 
   // commit entries at the head, and unwind exceptions from the tail
   val rob_head = RegInit(0.U(log2Ceil(numRobRows).W))
+  val shadow_rob_head = RegInit(0.U(robAddrSz.W))
+  val shadow_rob_active = RegInit(false.B)
+
+  when(io.latch_shadow) {
+    shadow_rob_head := rob_head
+    shadow_rob_active := false.B
+  }
+
+  when(rob_head === shadow_rob_head && !io.latch_shadow) {
+    shadow_rob_active := true.B
+  }
+
   val rob_head_lsb = RegInit(
     0.U((1 max log2Ceil(coreWidth)).W)
   ) // TODO: Accurately track head LSB (currently always 0)
@@ -235,7 +250,22 @@ class Rob(
   val rob_pnr_lsb = RegInit(0.U((1 max log2Ceil(coreWidth)).W))
   val rob_pnr_idx = if (coreWidth == 1) rob_pnr else Cat(rob_pnr, rob_pnr_lsb)
 
-  val next_rob_head = WireInit(rob_head)
+  when(io.veto_restore && shadow_rob_active) {
+    rob_tail := shadow_rob_head
+    rob_pnr := shadow_rob_head
+    rob_tail_lsb := 0.U
+    rob_pnr_lsb := 0.U
+
+    r_xcpt_val := false.B
+  }.elsewhen(io.brupdate.b2.mispredict) {
+    rob_tail := brupdate_b2_rob_row
+    rob_tail_lsb := brupdate_b2_rob_bank_idx + 1.U
+  }.elsewhen(io.enq_valids.asUInt.orR && !io.enq_partial_stall)
+
+  val next_rob_head = WireInit(rob_head) {
+    rob_tail := WrapInc(rob_tail, numRobRows)
+  }
+
   rob_head := next_rob_head
 
   val full = Wire(Bool())
@@ -425,6 +455,24 @@ class Rob(
     )
 
     val rob_debug_wdata = Mem(numRobRows, UInt(xLen.W))
+
+    when(io.veto_restore && shadow_rob_active) {
+      for (i <- 0 until numRobRows) {
+        val idx = i.U(log2Ceil(numRobRows).W)
+        val is_speculative = Wire(Bool())
+
+        when(rob_tail >= shadow_rob_head) {
+          is_speculative := (idx >= shadow_rob_head) && (idx < rob_tail)
+        }.otherwise {
+          is_speculative := idx >= shadow_rob_head || idx < rob_tail
+        }
+        // XXX: Can we do better? By implementing a global "flash" bit to clear?
+        when(is_speculative) {
+          rob_val(idx) := false.B
+          rob_bsy(idx) := false.B
+        }
+      }
+    }
 
     // -----------------------------------------------
     // Dispatch: Add Entry to ROB
