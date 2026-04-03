@@ -157,6 +157,7 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p) {
   val rob_pnr_idx = Input(UInt(robAddrSz.W))
   val rob_head_idx = Input(UInt(robAddrSz.W))
   val exception = Input(Bool())
+  val veto_restore = Output(Bool())
 
   val fencei_rdy = Output(Bool())
 
@@ -231,7 +232,10 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
     with rocket.HasL1HellaCacheParameters {
   val io = IO(new LSUIO)
 
-  val veto_restore = io.core.exception
+  val trigger_veto =
+    retry_queue.io.deq.valid && (retry_queue.io.deq.bits.uop.rob_idx === io.core.rob_head_idx)
+
+  io.core.veto_restore := io.core.exception || trigger_veto
   val shadow_rob_head = io.core.rob_head_idx
 
   // invariant: saq cannot dequeue when there are older loads uncommitted
@@ -684,7 +688,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
 
   val retry_queue = Module(new BranchKillableQueue(new MemGen, 8))
   retry_queue.io.brupdate := io.core.brupdate
-  retry_queue.io.flush := io.core.exception
+  retry_queue.io.flush := io.core.exception || io.core.veto_restore
 
   retry_queue.io.enq.valid := can_enq_store_retry || can_enq_load_retry
   retry_queue.io.enq.bits := DontCare
@@ -1239,7 +1243,9 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
     dmem_req(w).bits.is_hella := false.B
 
     s0_kills(w) := false.B
-    io.dmem.s1_kill(w) := RegNext(s0_kills(w) && dmem_req_fire(w))
+    io.dmem.s1_kill(w) := RegNext(
+      (s0_kills(w) || veto_restore) && dmem_req_fire(w)
+    )
 
     when(will_fire_load_agen_exec(w)) {
       dmem_req(w).valid := true.B
