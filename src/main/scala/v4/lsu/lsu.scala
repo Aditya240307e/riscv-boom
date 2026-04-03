@@ -231,6 +231,9 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
     with rocket.HasL1HellaCacheParameters {
   val io = IO(new LSUIO)
 
+  val veto_restore = io.core.exception
+  val shadow_rob_head = io.core.rob_head_idx
+
   // invariant: saq cannot dequeue when there are older loads uncommitted
   // val ldq                 = Reg(Vec(numLdqEntries, Valid(new LDQEntry)))
   val ldq_valid = Reg(Vec(numLdqEntries, Bool()))
@@ -437,11 +440,11 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
     when(dis_uops(w).valid && dis_uops(w).bits.uses_ldq) {
       val ldq_idx = dis_uops(w).bits.ldq_idx
       ldq_veto_stall(ldq_idx) := dis_uops(w).bits.is_tainted
-      ldq_valid(ldq_idx) := !IsKilledByBranch(
+      ldq_valid(ldq_idx) := (!IsKilledByBranch(
         io.core.brupdate,
         io.core.exception,
         dis_uops(w).bits
-      )
+      ) && !veto_restore)
       ldq_uop(ldq_idx) := UpdateBrMask(io.core.brupdate, dis_uops(w).bits)
       ldq_addr(ldq_idx).valid := false.B
       ldq_executed(ldq_idx) := false.B
@@ -523,6 +526,17 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
   stq_tail := st_enq_idx
 
   for (i <- 0 until numLdqEntries) {
+    val ld_killed_by_veto = veto_restore && IsOlder(
+      shadow_rob_head,
+      ldq_uop(i).rob_idx,
+      io.core.rob_head_idx
+    )
+    when(ld_killed_by_veto || io.core.exception) {
+      ldq_valid(i) := false.B
+      ldq_veto_stall(i) := false.B
+      ldq_addr(i).valid := false.B
+      ldq_executed(i) := false.B
+    }
     when(
       io.core.veto_release.valid && ldq_uop(i).br_mask(
         io.core.veto_release.bits.br_tag
@@ -540,6 +554,20 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
       )
     ) {
       ldq_veto_stall(i) := false.B
+    }
+  }
+
+  for (i <- 0 until numStqEntries) {
+    val st_killed_by_veto = veto_restore && IsOlder(
+      shadow_rob_head,
+      stq_uop(i).rob_idx,
+      io.core.rob_head_idx
+    )
+    when(st_killed_by_veto || io.core.exception) {
+      stq_valid(i) := false.B
+      stq_addr(i).valid := false.B
+      stq_data(i).valid := false.B
+      stq_committed(i) := false.B
     }
   }
 
@@ -687,7 +715,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
     _ || _
   ) || will_fire_store_retry.reduce(_ || _)
 
-  val stq_execute_queue_flush = WireInit(false.B)
+  val stq_execute_queue_flush = WireInit(veto_restore)
   val stq_execute_queue = withReset(reset.asBool || stq_execute_queue_flush) {
     Module(new Queue(new STQEntry, 4))
   }

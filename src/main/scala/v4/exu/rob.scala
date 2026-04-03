@@ -260,11 +260,12 @@ class Rob(
   }.elsewhen(io.brupdate.b2.mispredict) {
     rob_tail := brupdate_b2_rob_row
     rob_tail_lsb := brupdate_b2_rob_bank_idx + 1.U
-  }.elsewhen(io.enq_valids.asUInt.orR && !io.enq_partial_stall)
-
-  val next_rob_head = WireInit(rob_head) {
+  }.elsewhen(io.enq_valids.asUInt.orR && !io.enq_partial_stall) {
     rob_tail := WrapInc(rob_tail, numRobRows)
+    rob_tail_lsb := 0.U
   }
+
+  val next_rob_head = WireInit(rob_head)
 
   rob_head := next_rob_head
 
@@ -955,28 +956,15 @@ class Rob(
       rob_pnr_lsb := next_rob_pnr_idx(log2Ceil(coreWidth) - 1, 0)
   } else {
     val safe_to_inc = rob_state === s_normal || rob_state === s_wait_till_empty
-    val do_inc_row = !rob_pnr_unsafe.reduce(
-      _ || _
-    ) && !(rob_pnr === rob_tail && !io.brupdate.b2.mispredict)
-    when(rob_state === s_rollback) {
+    val do_inc_row = !rob_pnr_unsafe.reduce(_ || _) &&
+      !(rob_pnr === rob_tail && !io.brupdate.b2.mispredict)
+
+    when(io.veto_restore && shadow_rob_active) {
+      rob_pnr := shadow_rob_head
+      rob_pnr_lsb := 0.U
+    }.elsewhen(rob_state === s_rollback) {
       assert(rob_pnr === rob_head)
       rob_pnr_lsb := 0.U
-    }.elsewhen(empty && io.enq_valids.asUInt =/= 0.U) {
-      // Unforunately for us, the ROB does not use its entries in monotonically
-      //  increasing order, even in the case of no exceptions. The edge case
-      //  arises when partial rows are enqueued and committed, leaving an empty
-      //  ROB.
-      rob_pnr := rob_head
-      rob_pnr_lsb := PriorityEncoder(io.enq_valids)
-    }.elsewhen(safe_to_inc && do_inc_row) {
-      rob_pnr := WrapInc(rob_pnr, numRobRows)
-      rob_pnr_lsb := 0.U
-    }.elsewhen(safe_to_inc && (rob_pnr =/= rob_tail)) {
-      rob_pnr_lsb := PriorityEncoder(rob_pnr_unsafe)
-    }.elsewhen(safe_to_inc && !full && !empty) {
-      rob_pnr_lsb := PriorityEncoder(
-        rob_pnr_unsafe.asUInt | ~MaskLower(rob_tail_vals.asUInt)
-      )
     }
   }
 
@@ -995,7 +983,11 @@ class Rob(
   // -----------------------------------------------
   // ROB Tail Logic
 
-  when(io.brupdate.b2.mispredict) {
+  when(io.veto_restore && shadow_rob_active) {
+    rob_tail := shadow_rob_head
+    rob_tail_lsb := 0.U
+    r_partial_row := false.B
+  }.elsewhen(io.brupdate.b2.mispredict) {
     rob_tail := WrapInc(GetRowIdx(io.brupdate.b2.uop.rob_idx), numRobRows)
     rob_tail_lsb := 0.U
     r_partial_row := false.B

@@ -30,10 +30,13 @@ abstract class AbstractRenameStage(plWidth: Int, numWbPorts: Int)(implicit
     p: Parameters
 ) extends BoomModule {
   val io = IO(new Bundle {
+
     val ren_stalls = Output(Vec(plWidth, Bool()))
 
     val kill = Input(Bool())
 
+    val latch_shadow = Input(Bool()) // From CSR 0x800
+    val veto_restore = Input(Bool()) // From Sidecar Trigger
     val dec_fire = Input(Vec(plWidth, Bool())) // will commit state updates
     val dec_uops = Input(Vec(plWidth, new MicroOp()))
 
@@ -220,7 +223,11 @@ class RenameStage(
   // The TMT table (tags the current taint state of all the registers)
   val taint_reg_table = RegInit(0.U(numPhysRegs.W))
   val tmt_snapshots = Reg(Vec(maxBrCount, UInt(numPhysRegs.W)))
+  val tmt_shadow = RegInit(0.U(numPhysRegs.W))
 
+  when(io.latch_shadow) {
+    tmt_shadow := taint_reg_table
+  }
   // Global Branch Mispredict Recovery:
   val any_mispredict = io.brupdate.b1.mispredict_mask.orR
   val mispredict_tag = PriorityEncoder(io.brupdate.b1.mispredict_mask)
@@ -229,8 +236,17 @@ class RenameStage(
   when(any_mispredict) {
     taint_reg_table := tmt_snapshots(mispredict_tag)
   }
-  var cumulative_tmt =
+  var cumulative_tmt = Mux(
+    io.veto_restore,
+    tmt_shadow,
     Mux(any_mispredict, tmt_snapshots(mispredict_tag), taint_reg_table)
+  )
+
+  when(io.veto_restore) {
+    taint_reg_table := tmt_shadow
+  }.elsewhen(any_mispredict) {
+    taint_reg_table := tmt_snapshots(mispredict_tag)
+  }
 
   // -------------------------------------------------------------
   // Rename Structures
@@ -303,6 +319,9 @@ class RenameStage(
   maptable.io.rollback := io.rollback
   maptable.io.com_remap_reqs := com_remap_reqs
 
+  maptable.io.latch_shadow := io.latch_shadow
+  maptable.io.veto_restore := io.veto_restore
+
   // Maptable outputs.
   for ((uop, w) <- ren1_uops.zipWithIndex) {
     val mappings = maptable.io.map_resps(w)
@@ -328,6 +347,8 @@ class RenameStage(
   freelist.io.ren_br_tags := ren2_br_tags
   freelist.io.brupdate := io.brupdate
   freelist.io.rollback := io.rollback
+  freelist.io.latch_shadow := io.latch_shadow
+  freelist.io.veto_restore := io.veto_restore
 
   // Freelist outputs.
   for ((uop, w) <- ren2_uops.zipWithIndex) {

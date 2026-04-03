@@ -1067,6 +1067,23 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     bregfile.io.write_ports(w).bits.data.rxq_idx := uop.rxq_idx
   }
 
+  val latch_shadow = (csr.io.rw.addr === 0x800.U) && (csr.io.rw.cmd === CSR.W)
+  val veto_restore = sidecar_unit.io.veto_trigger
+
+  rob.io.latch_shadow := latch_shadow
+  rob.io.veto_restore := veto_restore
+
+  rename_stage.io.latch_shadow := latch_shadow
+  rename_stage.io.veto_restore := veto_restore
+
+  val ssi_flush = rob.io.flush.valid || veto_restore
+  io.ifu.redirect_val := ssi_flush
+  io.ifu.redirect_flush := ssi_flush
+
+  for (iss_unit <- Seq(mem_iss_unit, alu_iss_unit, unq_iss_unit)) {
+    iss_unit.io.flush_pipeline := RegNext(ssi_flush)
+  }
+
   // -------------------------------------------------------------
   // -------------------------------------------------------------
   // **** Issue Stage ****
