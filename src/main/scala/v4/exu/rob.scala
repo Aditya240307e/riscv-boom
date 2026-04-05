@@ -68,7 +68,7 @@ class RobIo(
     val rob_idx = UInt(robAddrSz.W)
   }))
 
-  val veto_release = Output(Valid(new Bundle {
+  val veto_release = Flipped(Valid(new Bundle {
     val rob_idx = UInt(robAddrSz.W)
     val br_tag = UInt(brTagSz.W)
   }))
@@ -220,6 +220,7 @@ class Rob(
   // ROB Finite State Machine
   val s_reset :: s_normal :: s_wait_till_empty :: s_rollback :: Nil = Enum(4)
   val rob_state = RegInit(s_reset)
+  val rob_state_is_vetoed = RegInit(VecInit(Seq.fill(numRobEntries)(false.B)))
 
   // commit entries at the head, and unwind exceptions from the tail
   val rob_head = RegInit(0.U(log2Ceil(numRobRows).W))
@@ -430,9 +431,9 @@ class Rob(
     Reg(Vec(numRobRows, UInt(freechips.rocketchip.tile.FPConstants.FLAGS_SZ.W)))
   )
 
-  io.veto_release.valid := io.brupdate.b1.resolve_mask.orR
-  io.veto_release.bits.br_tag := PriorityEncoder(io.brupdate.b1.resolve_mask)
-  io.veto_release.bits.rob_idx := 0.U // Placeholder
+  when(io.veto_release.valid) {
+    rob_state_is_vetoed(io.veto_release.bits.rob_idx) := false.B
+  }
 
   for (w <- 0 until coreWidth) {
     def MatchBank(bank_idx: UInt): Bool = (bank_idx === w.U)
@@ -471,6 +472,7 @@ class Rob(
         when(is_speculative) {
           rob_val(idx) := false.B
           rob_bsy(idx) := false.B
+          rob_state_is_vetoed(idx) := false.B
         }
       }
     }
@@ -492,10 +494,22 @@ class Rob(
       rob_fflags(rob_tail).bits := 0.U
       rob_is_in_sidecar(rob_tail) := io.enq_uops(w).is_tainted
       rob_sidecar_done(rob_tail) := false.B
+      rob_state_is_vetoed(rob_tail) := io.enq_uops(w).is_tainted
 
       assert(rob_val(rob_tail) === false.B, "[rob] overwriting a valid entry.")
       assert((io.enq_uops(w).rob_idx >> log2Ceil(coreWidth)) === rob_tail)
     }.elsewhen(io.enq_valids.reduce(_ | _) && !rob_val(rob_tail)) {}
+
+    when(
+      io.veto_release.valid && (GetBankIdx(
+        io.veto_release.bits.rob_idx
+      ) === w.U)
+    ) {
+      val release_row = GetRowIdx(io.veto_release.bits.rob_idx)
+      rob_state_is_vetoed(release_row) := false.B
+      // Optional:
+      rob_sidecar_done(release_row) := true.B
+    }
 
     // -----------------------------------------------
     // Writeback
@@ -588,11 +602,14 @@ class Rob(
 
     val head_is_sidecar = rob_is_in_sidecar(rob_head)
     val head_sidecar_ready = rob_sidecar_done(rob_head)
+    val sidecar_ready = !rob_bsy(rob_head) && !rob_state_is_vetoed(rob_head)
 
-    can_commit(w) := rob_val(rob_head) && Mux(
+    can_commit(w) := rob_val(
+      rob_head
+    ) && !io.csr_stall && !io.brupdate.b2.mispredict && Mux(
       head_is_sidecar,
-      head_sidecar_ready,
-      !rob_bsy(rob_head) && !io.csr_stall && !io.brupdate.b2.mispredict
+      sidecar_ready,
+      !rob_bsy(rob_head)
     )
 
     // use the same "com_uop" for both rollback AND commit
@@ -635,6 +652,7 @@ class Rob(
         )
       ) {
         rob_val(i) := false.B
+        rob_state_is_vetoed(i) := false.B
       }
 
       // //kill instruction if mispredict & br mask match

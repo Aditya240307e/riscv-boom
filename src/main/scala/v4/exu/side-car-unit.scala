@@ -23,6 +23,7 @@ class SidecarUnit(implicit p: Parameters)
     val veto_trigger = Output(Bool())
     // TODO: Sensitivity analysis on veto_threshold
     val veto_threshold = Input(UInt(16.W))
+    val veto_enable = Input(Bool())
     val deq_uop = Output(new MicroOp)
     val task_queue_head_valid = Output(Bool())
   })
@@ -67,6 +68,22 @@ class SidecarUnit(implicit p: Parameters)
   io.sidecar_res.bits.uop := uop_reg
   io.sidecar_res.bits.uop.br_mask := next_br_mask
   io.sidecar_res.bits.data := alu_out
-
+  io.deq_uop := task_queue.io.deq.bits
   task_queue.io.deq.ready := can_execute
+
+  val veto_counter = RegInit(0.U(16.W))
+
+  val timeout_fired = val_reg && (veto_counter > io.veto_threshold)
+  // XXX: Change the veto_trigger to false.B for initial builds/testing
+  io.veto_trigger := Mux(reg_killed, false.B, timeout_fired)
+
+  when(can_execute) {
+    veto_counter := 0.U
+  }.elsewhen(val_reg && !reg_killed && !io.sidecar_res.fire) {
+    veto_counter := veto_counter + 1.U
+  }.otherwise {
+    veto_counter := 0.U
+  }
+
+  io.veto_trigger := timeout_fired && !reg_killed
 }

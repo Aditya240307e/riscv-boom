@@ -149,15 +149,15 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p) {
 
   val brupdate = Input(new BrUpdateInfo)
 
-  val veto_release = IO(Input(Valid(new Bundle {
-    val br_tag = UInt(brTagSz.W)
-  })))
-
+  val veto_release = Output(Valid(new Bundle {
+    val rob_idx = UInt(robAddrSz.W)
+  }))
   val side_car_dis_uop = Output(Valid(new MicroOp))
   val rob_pnr_idx = Input(UInt(robAddrSz.W))
   val rob_head_idx = Input(UInt(robAddrSz.W))
   val exception = Input(Bool())
   val veto_restore = Output(Bool())
+  val sidecar_res = Input(new SidecarResp)
 
   val fencei_rdy = Output(Bool())
 
@@ -175,6 +175,15 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p) {
     val release = Bool()
     val tlbMiss = Bool()
   })
+}
+
+class SidecarResp(implicit p: Parameters)
+    extends BoomBundle
+    with rocket.HasL1HellaCacheParameters {
+  val address = UInt(vaddrBits.W)
+  val rob_idx = UInt(robAddrSz.W)
+  val valid = Bool()
+
 }
 
 class LSUIO(implicit p: Parameters, edge: TLEdgeOut) extends BoomBundle()(p) {
@@ -236,6 +245,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
     retry_queue.io.deq.valid && (retry_queue.io.deq.bits.uop.rob_idx === io.core.rob_head_idx)
 
   io.core.veto_restore := io.core.exception || trigger_veto
+  val veto_restore = io.core.veto_restore
   val shadow_rob_head = io.core.rob_head_idx
 
   // invariant: saq cannot dequeue when there are older loads uncommitted
@@ -542,9 +552,9 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
       ldq_executed(i) := false.B
     }
     when(
-      io.core.veto_release.valid && ldq_uop(i).br_mask(
-        io.core.veto_release.bits.br_tag
-      )
+      io.core.veto_release.valid && (ldq_uop(
+        i
+      ).rob_idx === io.core.veto_release.bits.rob_idx)
     ) {
       ldq_veto_stall(i) := false.B
 
@@ -558,6 +568,19 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
       )
     ) {
       ldq_veto_stall(i) := false.B
+    }
+  }
+
+  when(io.core.sidecar_res.valid) {
+    for (i <- 0 until numLdqEntries) {
+      when(
+        ldq_valid(i) && (ldq_uop(i).rob_idx === io.core.sidecar_res.rob_idx)
+      ) {
+        ldq_veto_stall(i) := false.B
+        ldq_addr(i).valid := true.B
+        ldq_addr(i).bits := io.core.sidecar_res.address
+        ldq_executed(i) := false.B
+      }
     }
   }
 
@@ -2627,6 +2650,10 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
       ldq_valid(i) := false.B
     }
   }
+
+  // When the sidecar result is valid, tell the ROB to "unveto" this instruction
+  io.core.veto_release.valid := io.core.sidecar_res.valid
+  io.core.veto_release.bits.rob_idx := io.core.sidecar_res.rob_idx
 
 }
 

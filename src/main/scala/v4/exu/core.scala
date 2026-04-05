@@ -43,6 +43,7 @@ import freechips.rocketchip.devices.tilelink.{PLICConsts, CLINTConsts}
 import boom.v4.common._
 import boom.v4.ifu.{GlobalHistory, HasBoomFrontendParameters}
 import boom.v4.util._
+import freechips.rocketchip.util.SeqToAugmentedSeq
 
 /** Top level core object that connects the Frontend to the rest of the
   * pipeline.
@@ -69,9 +70,15 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   io.ifu := DontCare
 
   val reg_veto_enable = RegInit(false.B)
+  val reg_veto_threshold = RegInit(100.U(16.W))
+  reg_veto_enable := custom_csrs.enableVeto
   val csr_cmd_valid = csr.io.rw.cmd =/= freechips.rocketchip.rocket.CSR.N
-  when(csr_cmd_valid && csr.io.rw.addr === 0x800.U) {
-    reg_veto_enable := csr.io.rw.wdata(0)
+
+  when(csr_cmd_valid) {
+    when(csr.io.rw.addr === 0x800.U) { reg_veto_enable := csr.io.rw.wdata(0) }
+    when(csr.io.rw.addr === 0x801.U) {
+      reg_veto_threshold := csr.io.rw.wdata(15, 0)
+    }
   }
   // **********************************
   // construct all of the modules
@@ -154,6 +161,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     enableALUSingleWideDispatch
   )
   val dispatcher = Module(new BasicDispatcher)
+  dispatcher.io.veto_enable := reg_veto_enable
   val iregfileBankedWriteArray = Seq.fill(lsuWidth + 1) {
     None
   } ++ ((0 until aluWidth).map { w =>
@@ -205,6 +213,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
       trace
     )
   )
+  rob.io.veto_restore := veto_restore
   // Used to wakeup registers in rename and issue. ROB needs to listen to something else.
   val int_wakeups = Wire(Vec(numIntWakeups, Valid(new Wakeup)))
   val pred_wakeups = Wire(Vec(aluWidth, Valid(new Wakeup)))
@@ -809,6 +818,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     rename.io.com_valids := rob.io.commit.valids
     rename.io.com_uops := rob.io.commit.uops
     rename.io.rollback := rob.io.rollback
+    rename.io.veto_restore := veto_restore
   }
 
   // Outputs
@@ -952,15 +962,22 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   dis_ready := !dis_stalls.last
 
   for (w <- 0 until coreWidth) {
-    val uop = dis_uops(w)
-    val steered_uop = WireInit(uop)
-    when(reg_veto_enable && uop.is_tainted) {
-      steered_uop.iq_type := IQ_VETO.U
-    }
+    val uop = rename_stage.io.ren2_uops(w)
+    val is_valid = rename_stage.io.ren2_mask(w)
+    val is_tainted = uop.is_tainted && reg_veto_enable
 
+    val steered_uop = WireInit(uop)
+    steered_uop.iq_type := Mux(is_tainted, IQ_VETO.asUInt, uop.iq_type.asUInt)
+      .asTypeOf(uop.iq_type)
+    steered_uop.is_tainted := is_tainted // Ensure the bit travels with the uop
+
+    dispatcher.io.ren_uops(w).valid := is_valid
     dispatcher.io.ren_uops(w).bits := steered_uop
-    dispatcher.io.ren_uops(w).valid := dis_fire(w)
+    rename_stage.io.dis_fire(w) := dispatcher.io.ren_uops(w).fire
   }
+  rename_stage.io.dis_ready := dispatcher.io.ren_uops
+    .map(_.ready)
+    .reduce(_ && _)
 
   // -------------------------------------------------------------
   // LDQ/STQ Allocation Logic
@@ -1021,15 +1038,6 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   // Dispatch to issue queues
 
   // Get uops from rename2
-  for (w <- 0 until coreWidth) {
-
-    val uop = rename_stage.io.ren2_uops(w)
-    val final_uop = WireInit(uop)
-    final_uop.is_tainted := uop.is_tainted && reg_veto_enable
-
-    dispatcher.io.ren_uops(w).valid := dis_fire(w)
-    dispatcher.io.ren_uops(w).bits := dis_uops(w)
-  }
 
   var iu_idx = 0
   // Send dispatched uops to correct issue queues
@@ -1068,7 +1076,11 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   }
 
   val latch_shadow = (csr.io.rw.addr === 0x800.U) && (csr.io.rw.cmd === CSR.W)
-  val veto_restore = sidecar_unit.io.veto_trigger
+  val veto_restore = sidecar_unit.io.veto_trigger || io.lsu.veto_restore
+  io.lsu.sidecar_res.valid := sidecar_unit.io.sidecar_res.valid
+  io.lsu.sidecar_res.address := sidecar_unit.io.sidecar_res.bits.data
+  io.lsu.sidecar_res.rob_idx := sidecar_unit.io.sidecar_res.bits.uop.rob_idx
+  io.lsu.veto_release := rob.io.veto_release
 
   rob.io.latch_shadow := latch_shadow
   rob.io.veto_restore := veto_restore
@@ -1202,6 +1214,13 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   wb_idx += 1
 
   val sidecar_unit = Module(new SidecarUnit)
+  // XXX: DO THE SENSITIVITY ANALYSIS HERE
+
+  sidecar_merger.io.sidecar_res <> sidecar_unit.io.sidecar_res
+  sidecar_unit.io.br_update := brupdate
+  sidecar_unit.io.veto_enable := reg_veto_enable
+  sidecar_unit.io.veto_threshold := reg_veto_threshold
+  veto_restore := sidecar_unit.io.veto_trigger
   val sidecar_read_port_idx = alu_exe_units.map(_.numIrfReadPorts).sum
   sidecar_unit.io.dis_uops <> dispatcher.io.dis_uops(IQ_VETO)
 
@@ -1232,9 +1251,8 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     !sidecar_unit.io.deq_uop.prs2_busy
   )
 
-  sidecar_unit.io.br_update := io.ifu.brupdate
   sidecar_merger.io.sidecar_res <> sidecar_unit.io.sidecar_res
-  sidecar_merger.io.br_update := io.ifu.brupdate
+  sidecar_merger.io.br_update := brupdate
 
   // loop through each issue-port (exe_units are statically connected to an issue-port)
   // OPTIM: can we do better?
@@ -1250,7 +1268,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
       }.otherwise {
         int_wakeups(wu_idx) := fast_wakeup
       }
-      when(unit.io_alu_resp.valid) {
+      when(unit.io_alu_resp.valid && unit.io_alu_resp.bits.uop.is_tainted) {
         printf(
           "[SIDECAR_DATA] RS1: 0x%x, RS2: 0x%x, WB_Valid: %d\n",
           unit.exe_rs1_data,
@@ -1283,6 +1301,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
 
     // Connect to the PRF
     if (i == 0) {
+      sidecar_merger.io.main_wb_valid := unit.io_alu_resp.valid
       // Hijack the first write port for the Sidecar if it's stealing a cycle
       when(sidecar_merger.io.out_wb.valid) {
         iregfile.io.write_ports(wb_idx).valid := true.B
@@ -1320,6 +1339,15 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     wb_idx += 1
     pred_wakeups(i) := unit.io_fast_pred_wakeup
   }
+
+  val sidecar_wu_idx = numIntWakeups - 1
+  int_wakeups(sidecar_wu_idx).valid := sidecar_merger.io.out_wb.valid
+  int_wakeups(sidecar_wu_idx).bits.uop := sidecar_merger.io.out_wb.bits.uop
+
+  rob.io.sidecar_wb.valid := RegNext(sidecar_merger.io.rob_done.valid)
+  rob.io.sidecar_wb.bits.rob_idx := RegNext(
+    sidecar_merger.io.rob_done.bits.rob_idx
+  )
 
   // FIXME: (Assuming you have 4 standard ALUs, indices 0-3, your Sidecar is 4)
   for (iss_unit <- Seq(mem_iss_unit, alu_iss_unit, unq_iss_unit)) {
