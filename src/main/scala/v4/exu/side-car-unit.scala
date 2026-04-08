@@ -11,13 +11,14 @@ class SidecarUnit(implicit p: Parameters)
     with HasBoomCoreParameters {
   val io = IO(new Bundle {
     val dis_uops = Flipped(Decoupled(new MicroOp()))
-    val iss_resps = Flipped(new Bundle {
+    val enq = Vec(4, Flipped(Valid(new Wakeup())))
+    val iss_resps = new Bundle {
       val rs1_ready = Input(Bool()) // Changed to Bool for logic clarity
       val rs2_ready = Input(Bool()) // Changed to Bool for logic clarity
       val rs1_data = Input(UInt(xLen.W))
       val rs2_data = Input(UInt(xLen.W))
       val task_queue_head_valid = Output(Bool())
-    })
+    }
     val sidecar_res = Decoupled(new ExeUnitResp(xLen))
     val br_update = Input(new BrUpdateInfo())
     val veto_trigger = Output(Bool())
@@ -74,8 +75,6 @@ class SidecarUnit(implicit p: Parameters)
   val veto_counter = RegInit(0.U(16.W))
 
   val timeout_fired = val_reg && (veto_counter > io.veto_threshold)
-  // XXX: Change the veto_trigger to false.B for initial builds/testing
-  io.veto_trigger := Mux(reg_killed, false.B, timeout_fired)
 
   when(can_execute) {
     veto_counter := 0.U
@@ -85,5 +84,5 @@ class SidecarUnit(implicit p: Parameters)
     veto_counter := 0.U
   }
 
-  io.veto_trigger := timeout_fired && !reg_killed
+  io.veto_trigger := timeout_fired && !reg_killed && io.veto_enable
 }

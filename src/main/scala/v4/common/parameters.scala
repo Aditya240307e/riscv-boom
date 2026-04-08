@@ -333,6 +333,16 @@ trait HasBoomCoreParameters
   issueParams.map(x =>
     require(x.dispatchWidth <= coreWidth && x.dispatchWidth > 0)
   )
+  val vetoIssueParam = issueParams
+    .find(_.iqType == IQ_VETO)
+    .getOrElse(
+      IssueParams(
+        issueWidth = 1,
+        numEntries = 8,
+        iqType = IQ_VETO,
+        dispatchWidth = 1
+      )
+    )
 
   // ************************************
   // Load/Store Unit

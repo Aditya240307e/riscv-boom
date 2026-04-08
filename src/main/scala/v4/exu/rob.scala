@@ -68,7 +68,7 @@ class RobIo(
     val rob_idx = UInt(robAddrSz.W)
   }))
 
-  val veto_release = Flipped(Valid(new Bundle {
+  val veto_release = Output(Valid(new Bundle {
     val rob_idx = UInt(robAddrSz.W)
     val br_tag = UInt(brTagSz.W)
   }))
@@ -250,21 +250,6 @@ class Rob(
   val rob_pnr = RegInit(0.U(log2Ceil(numRobRows).W))
   val rob_pnr_lsb = RegInit(0.U((1 max log2Ceil(coreWidth)).W))
   val rob_pnr_idx = if (coreWidth == 1) rob_pnr else Cat(rob_pnr, rob_pnr_lsb)
-
-  when(io.veto_restore && shadow_rob_active) {
-    rob_tail := shadow_rob_head
-    rob_pnr := shadow_rob_head
-    rob_tail_lsb := 0.U
-    rob_pnr_lsb := 0.U
-
-    r_xcpt_val := false.B
-  }.elsewhen(io.brupdate.b2.mispredict) {
-    rob_tail := brupdate_b2_rob_row
-    rob_tail_lsb := brupdate_b2_rob_bank_idx + 1.U
-  }.elsewhen(io.enq_valids.asUInt.orR && !io.enq_partial_stall) {
-    rob_tail := WrapInc(rob_tail, numRobRows)
-    rob_tail_lsb := 0.U
-  }
 
   val next_rob_head = WireInit(rob_head)
 
@@ -930,6 +915,21 @@ class Rob(
     "ROB is throwing an exception, but the stored exception information's " +
       "rob_idx does not match the rob_head"
   )
+
+  when(io.veto_restore && shadow_rob_active) {
+    rob_tail := shadow_rob_head
+    rob_pnr := shadow_rob_head
+    rob_tail_lsb := 0.U
+    rob_pnr_lsb := 0.U
+
+    r_xcpt_val := false.B
+  }.elsewhen(io.brupdate.b2.mispredict) {
+    rob_tail := brupdate_b2_rob_row
+    rob_tail_lsb := brupdate_b2_rob_bank_idx + 1.U
+  }.elsewhen(io.enq_valids.asUInt.orR && !io.enq_partial_stall) {
+    rob_tail := WrapInc(rob_tail, numRobRows)
+    rob_tail_lsb := 0.U
+  }
 
   // -----------------------------------------------
   // ROB Head Logic

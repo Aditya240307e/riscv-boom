@@ -152,6 +152,7 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p) {
   val veto_release = Output(Valid(new Bundle {
     val rob_idx = UInt(robAddrSz.W)
   }))
+
   val side_car_dis_uop = Output(Valid(new MicroOp))
   val rob_pnr_idx = Input(UInt(robAddrSz.W))
   val rob_head_idx = Input(UInt(robAddrSz.W))
@@ -240,6 +241,8 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
     extends BoomModule()(p)
     with rocket.HasL1HellaCacheParameters {
   val io = IO(new LSUIO)
+
+  val retry_queue = Module(new BranchKillableQueue(new MemGen, 8))
 
   val trigger_veto =
     retry_queue.io.deq.valid && (retry_queue.io.deq.bits.uop.rob_idx === io.core.rob_head_idx)
@@ -709,7 +712,6 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
     stq_enq_retry_e.bits.addr.valid &&
     stq_enq_retry_e.bits.addr_is_virtual)
 
-  val retry_queue = Module(new BranchKillableQueue(new MemGen, 8))
   retry_queue.io.brupdate := io.core.brupdate
   retry_queue.io.flush := io.core.exception || io.core.veto_restore
 

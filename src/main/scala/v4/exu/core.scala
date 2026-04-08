@@ -44,6 +44,7 @@ import boom.v4.common._
 import boom.v4.ifu.{GlobalHistory, HasBoomFrontendParameters}
 import boom.v4.util._
 import freechips.rocketchip.util.SeqToAugmentedSeq
+import boom.v3.common
 
 /** Top level core object that connects the Frontend to the rest of the
   * pipeline.
@@ -69,20 +70,10 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   io.ptw := DontCare
   io.ifu := DontCare
 
-  val reg_veto_enable = RegInit(false.B)
-  val reg_veto_threshold = RegInit(100.U(16.W))
-  reg_veto_enable := custom_csrs.enableVeto
-  val csr_cmd_valid = csr.io.rw.cmd =/= freechips.rocketchip.rocket.CSR.N
-
-  when(csr_cmd_valid) {
-    when(csr.io.rw.addr === 0x800.U) { reg_veto_enable := csr.io.rw.wdata(0) }
-    when(csr.io.rw.addr === 0x801.U) {
-      reg_veto_threshold := csr.io.rw.wdata(15, 0)
-    }
-  }
   // **********************************
   // construct all of the modules
 
+  val reg_veto_enable = RegInit(false.B)
   val mem_exe_units: Seq[MemExeUnit] = (0 until memWidth) map { w =>
     Module(
       new MemExeUnit(
@@ -119,12 +110,14 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
 
   // ********************************************************
   // Clear fp_pipeline before use
-  fp_pipeline.io.ll_wports := DontCare
+  // PERF: Removed the following because it was interfering with the loop near line 222
+  // fp_pipeline.io.ll_wports := DontCare
 
   val numIrfWritePorts = aluWidth + lsuWidth + 1
   val numIrfLogicalReadPorts = all_exe_units.map(_.nReaders).reduce(_ + _)
 
   val numIntWakeups = coreWidth + lsuWidth + 1
+  val numVetoWakeups = numIntWakeups + 1
   val numFpWakeupPorts = fp_pipeline.io.wakeups.length
 
   val numImmReaders =
@@ -213,9 +206,37 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
       trace
     )
   )
+  val veto_restore = Wire(Bool())
   rob.io.veto_restore := veto_restore
   // Used to wakeup registers in rename and issue. ROB needs to listen to something else.
-  val int_wakeups = Wire(Vec(numIntWakeups, Valid(new Wakeup)))
+  val int_wakeups = Wire(Vec(numVetoWakeups, Valid(new Wakeup)))
+  for (w <- int_wakeups) {
+    when(veto_restore) { w.valid := false.B }
+  }
+
+  val sidecar_unit = Module(new SidecarUnit)
+  // what even am I doing
+  /*for (i <- 0 until fp_pipeline.io.wakeups.length) {
+    fp_pipeline.io
+      .wakeups(i)
+      .valid := false.B // Force a single driver starting point
+    fp_pipeline.io.wakeups(i).bits := DontCare
+  } */
+
+  val fp_wakeup_shadow = Wire(
+    Vec(fp_pipeline.io.wakeups.length, Valid(new Wakeup))
+  )
+
+  for (i <- 0 until fp_pipeline.io.wakeups.length) {
+    val wake_valid = int_wakeups(i).valid
+    val is_tainted = int_wakeups(i).bits.is_tainted
+    sidecar_unit.io.enq(i).valid := wake_valid && is_tainted
+    sidecar_unit.io.enq(i).bits := int_wakeups(i).bits
+    fp_wakeup_shadow(i).valid := wake_valid && !is_tainted
+    fp_wakeup_shadow(i).bits := int_wakeups(i).bits
+  }
+
+  fp_pipeline.io.wakeups <> fp_wakeup_shadow
   val pred_wakeups = Wire(Vec(aluWidth, Valid(new Wakeup)))
 
   // The arb stage guarantees only 1 pred wakeup per cycle
@@ -414,6 +435,25 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   val icache_blocked = false.B
   csr.io.counters foreach { c =>
     c.inc := RegNext(perfEvents.evaluate(c.eventSel))
+  }
+
+  val reg_veto_threshold = RegInit(100.U(16.W))
+
+  when(csr.io.rw.cmd =/= freechips.rocketchip.rocket.CSR.N) {
+    when(csr.io.rw.addr === 0x800.U) {
+      // FIXME: tf ts not working
+      // csr.io.rw.rdata := reg_veto_enable.asUInt
+      when(csr.io.rw.cmd.isOneOf(CSR.W, CSR.S, CSR.C)) {
+        reg_veto_enable := csr.io.rw.wdata(0)
+      }
+    }
+      .elsewhen(csr.io.rw.addr === 0x801.U) {
+        // FIXME: same as above
+        // csr.io.rw.rdata := reg_veto_threshold // This should be 16-bit, Chisel will zero-extend
+        when(csr.io.rw.cmd.isOneOf(CSR.W, CSR.S, CSR.C)) {
+          reg_veto_threshold := csr.io.rw.wdata(15, 0)
+        }
+      }
   }
 
   // ****************************************
@@ -1051,6 +1091,13 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
       alu_iss_unit.io.dis_uops <> dispatcher.io.dis_uops(i)
     } else if (issueParams(i).iqType == IQ_UNQ) {
       unq_iss_unit.io.dis_uops <> dispatcher.io.dis_uops(i)
+    } else if (issueParams(i).iqType == IQ_VETO) {
+      val dis_port = dispatcher.io
+        .dis_uops(i)(0)
+        .asInstanceOf[chisel3.util.DecoupledIO[MicroOp]]
+      sidecar_unit.io.dis_uops.valid := dis_port.valid
+      sidecar_unit.io.dis_uops.bits := dis_port.bits
+      dis_port.ready := sidecar_unit.io.dis_uops.ready
     } else {
       require(false)
     }
@@ -1076,11 +1123,13 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   }
 
   val latch_shadow = (csr.io.rw.addr === 0x800.U) && (csr.io.rw.cmd === CSR.W)
-  val veto_restore = sidecar_unit.io.veto_trigger || io.lsu.veto_restore
+  veto_restore := sidecar_unit.io.veto_trigger || io.lsu.veto_restore
   io.lsu.sidecar_res.valid := sidecar_unit.io.sidecar_res.valid
   io.lsu.sidecar_res.address := sidecar_unit.io.sidecar_res.bits.data
+  io.lsu.sidecar_res.valid := sidecar_unit.io.sidecar_res.valid
   io.lsu.sidecar_res.rob_idx := sidecar_unit.io.sidecar_res.bits.uop.rob_idx
-  io.lsu.veto_release := rob.io.veto_release
+  io.lsu.veto_release.valid := rob.io.veto_release.valid
+  io.lsu.veto_release.bits := rob.io.veto_release.bits
 
   rob.io.latch_shadow := latch_shadow
   rob.io.veto_restore := veto_restore
@@ -1213,7 +1262,6 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   iregfile.io.write_ports(wb_idx).bits.data := ll_arb.io.out.bits.data
   wb_idx += 1
 
-  val sidecar_unit = Module(new SidecarUnit)
   // XXX: DO THE SENSITIVITY ANALYSIS HERE
 
   sidecar_merger.io.sidecar_res <> sidecar_unit.io.sidecar_res
@@ -1222,7 +1270,8 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   sidecar_unit.io.veto_threshold := reg_veto_threshold
   veto_restore := sidecar_unit.io.veto_trigger
   val sidecar_read_port_idx = alu_exe_units.map(_.numIrfReadPorts).sum
-  sidecar_unit.io.dis_uops <> dispatcher.io.dis_uops(IQ_VETO)
+  val veto_issue_idx = issueParams.indexWhere(_.iqType == IQ_VETO)
+  // sidecar_unit.io.dis_uops <> dispatcher.io.dis_uops(veto_issue_idx)
 
   iregfile.io
     .arb_read_reqs(sidecar_read_port_idx)
@@ -1271,8 +1320,8 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
       when(unit.io_alu_resp.valid && unit.io_alu_resp.bits.uop.is_tainted) {
         printf(
           "[SIDECAR_DATA] RS1: 0x%x, RS2: 0x%x, WB_Valid: %d\n",
-          unit.exe_rs1_data,
-          unit.exe_rs2_data,
+          sidecar_unit.io.iss_resps.rs1_data,
+          sidecar_unit.io.iss_resps.rs2_data,
           sidecar_merger.io.main_wb_valid
         )
       }
@@ -1420,7 +1469,19 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
       .map(_.io_child_rebusy)
       .reduce(_ | _)
 
-    iss_unit.io.wakeup_ports := int_wakeups
+    val unit_wakeup_width = iss_unit.io.wakeup_ports.length
+    val temp_wakeups = Wire(Vec(unit_wakeup_width, Valid(new Wakeup)))
+
+    for (i <- 0 until unit_wakeup_width) {
+      if (i < int_wakeups.length) {
+        temp_wakeups(i) := int_wakeups(i)
+      } else {
+        // This handles cases where the unit expects more than we have
+        temp_wakeups(i).valid := false.B
+        temp_wakeups(i).bits := 0.U.asTypeOf(new Wakeup)
+      }
+    }
+    iss_unit.io.wakeup_ports := temp_wakeups
 
     iss_unit.io.rob_pnr_idx := rob.io.rob_pnr_idx
     iss_unit.io.rob_head := rob.io.rob_head_idx

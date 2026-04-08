@@ -431,35 +431,41 @@ class RenameStage(
 
     // Update the Cumulative TMT for the next lane in this cycle
     val pdst_mask = 1.U << final_uop.pdst
-    when(
+    val next_tmt_in_lane = Wire(UInt(numPhysRegs.W))
+    val update_tmt =
       final_uop.dst_rtype =/= RT_X && final_uop.pdst =/= 0.U && ren2_valids(w)
-    ) {
-      cumulative_tmt = Mux(
+    next_tmt_in_lane := Mux(
+      update_tmt,
+      Mux(
         current_uop_tainted,
         cumulative_tmt | pdst_mask,
         cumulative_tmt & ~pdst_mask
-      )
-    }
+      ),
+      cumulative_tmt
+    )
 
-    // Snapshot the TMT if this is a branch
     when(final_uop.is_br && ren2_valids(w) && !any_mispredict) {
-      tmt_snapshots(final_uop.br_tag) := cumulative_tmt
+      tmt_snapshots(final_uop.br_tag) := next_tmt_in_lane
     }
 
+    cumulative_tmt = next_tmt_in_lane
     io.ren2_mask(w) := ren2_valids(w)
   }
 
-  var commit_cleared_tmt = cumulative_tmt
+  val commit_vec = Wire(Vec(plWidth, UInt(numPhysRegs.W)))
+
   for (w <- 0 until plWidth) {
-    // check if a physical register is being retired this cycle
-    when(io.com_valids(w) && io.com_uops(w).dst_rtype === RT_FIX) {
-      val stale_pdst_mask = ~(1.U << io.com_uops(w).stale_pdst)
-      commit_cleared_tmt = commit_cleared_tmt & stale_pdst_mask
-    }
+    commit_vec(w) := Mux(
+      io.com_valids(w) && io.com_uops(w).dst_rtype === RT_FIX,
+      ~(1.U << io.com_uops(w).stale_pdst),
+      ~0.U(numPhysRegs.W)
+    )
   }
 
+  val final_commit_mask = commit_vec.toSeq.reduce(_ & _)
+
   // Write back the final cumulative state to the register for the next cycle
-  taint_reg_table := cumulative_tmt
+  taint_reg_table := cumulative_tmt & final_commit_mask
 
 }
 

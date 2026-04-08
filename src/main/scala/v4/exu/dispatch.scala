@@ -48,8 +48,12 @@ abstract class Dispatcher(implicit p: Parameters) extends BoomModule {
 class BasicDispatcher(implicit p: Parameters) extends Dispatcher {
   issueParams.map(ip => require(ip.dispatchWidth == coreWidth))
   // TODO: Make ren_readys aware of the vetoed status
-  val ren_readys =
-    io.dis_uops.map(d => VecInit(d.map(_.ready)).asUInt).reduce(_ & _)
+  val ren_readys = io.dis_uops
+    .map { d =>
+      val rdy_bits = VecInit(d.map(_.ready)).asUInt
+      rdy_bits(coreWidth - 1, 0) // Explicitly extract/pad to coreWidth
+    }
+    .reduce(_ & _)
 
   for (w <- 0 until coreWidth) {
     io.ren_uops(w).ready := ren_readys(w)
@@ -63,13 +67,21 @@ class BasicDispatcher(implicit p: Parameters) extends Dispatcher {
     val dis = io.dis_uops(i)
     val uop = io.ren_uops(w).bits
     val is_vetoed = uop.is_tainted && io.veto_enable
+    val veto_select_mask = Fill(uop.iq_type.getWidth, is_vetoed)
+    val current_iq_type_bits = uop.iq_type.asUInt
 
-    val target_iq_type = Mux(is_vetoed, (1 << IQ_VETO).U, uop.iq_type)
+    val veto_target_bits = (1 << IQ_VETO).asUInt(uop.iq_type.getWidth.W)
+    val target_iq_type = Mux(is_vetoed, veto_target_bits, current_iq_type_bits)
+    val matching_iq = target_iq_type(issueParam.iqType)
 
     dis(w).valid := io
       .ren_uops(w)
-      .valid && io.ren_uops(w).bits.iq_type(issueParam.iqType)
+      .valid && matching_iq
     dis(w).bits := io.ren_uops(w).bits
+
+    for (bitIdx <- 0 until uop.iq_type.size) {
+      dis(w).bits.iq_type(bitIdx) := target_iq_type(bitIdx)
+    }
 
     val debug_cycle_count = RegInit(0.U(128.W))
     debug_cycle_count := debug_cycle_count + 1.U
