@@ -153,6 +153,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     enableColumnALUIssue,
     enableALUSingleWideDispatch
   )
+  val veto_iss_unit = IssueUnit(vetoIssueParam, numVetoWakeups, false, false)
   val dispatcher = Module(new BasicDispatcher)
   dispatcher.io.veto_enable := reg_veto_enable
   val iregfileBankedWriteArray = Seq.fill(lsuWidth + 1) {
@@ -418,6 +419,16 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
       roccCSRs.flatten
     )
   )
+  val veto_sticky_reg = RegInit(false.B)
+  when(csr.io.rw.addr === 0x809.U && csr.io.rw.cmd === CSR.W) {
+    veto_sticky_reg := csr.io.rw.rdata(0)
+  }
+
+  veto_iss_unit.io.csr_veto_enable := veto_sticky_reg
+  mem_iss_unit.io.csr_veto_enable := false.B
+  unq_iss_unit.io.csr_veto_enable := false.B
+  alu_iss_unit.io.csr_veto_enable := false.B
+
   csr.io.inst foreach { c => c := DontCare }
   csr.io.rocc_interrupt := io.rocc.interrupt
   csr.io.gva := DontCare

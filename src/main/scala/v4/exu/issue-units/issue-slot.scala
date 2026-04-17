@@ -39,6 +39,7 @@ class IssueSlotIO(val numWakeupPorts: Int)(implicit p: Parameters)
   val out_uop = Output(new MicroOp())
 
   val brupdate = Input(new BrUpdateInfo())
+  val csr_veto_enable = Input(Bool())
   val kill = Input(Bool()) // pipeline flush
   val clear = Input(
     Bool()

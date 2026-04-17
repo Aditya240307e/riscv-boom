@@ -48,6 +48,7 @@ abstract class IssueUnit(
     val pred_wakeup_port = Flipped(Valid(UInt(log2Ceil(ftqSz).W)))
 
     val child_rebusys = Input(UInt(aluWidth.W))
+    val csr_veto_enable = Input(Bool())
 
     // tell the issue unit what each execution pipeline has in terms of functional units
     val fu_types = Input(Vec(issueWidth, Vec(FC_SZ, Bool())))

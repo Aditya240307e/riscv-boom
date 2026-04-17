@@ -172,6 +172,7 @@ class IssueUnitAgeMatrix(
     issue_slots(i).squash_grant := io.squash_grant
     issue_slots(i).brupdate := io.brupdate
     issue_slots(i).kill := io.flush_pipeline
+    issue_slots(i).csr_veto_enable := io.csr_veto_enable
 
     // in the matrix-based implementation, we will never clear the issue slots
     issue_slots(i).clear := false.B
