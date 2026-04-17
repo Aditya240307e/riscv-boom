@@ -228,7 +228,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     Vec(fp_pipeline.io.wakeups.length, Valid(new Wakeup))
   )
 
-  for (i <- 0 until fp_pipeline.io.wakeups.length) {
+  for (i <- 0 until fp_pipeline.io.wakeups.length) { // FIXME: SHOULD IT BE numVetoWakeups instead of fp_pipeline.io.wakeups.length????
     val wake_valid = int_wakeups(i).valid
     val is_tainted = int_wakeups(i).bits.is_tainted
     sidecar_unit.io.enq(i).valid := wake_valid && is_tainted
@@ -421,7 +421,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   )
   val veto_sticky_reg = RegInit(false.B)
   when(csr.io.rw.addr === 0x809.U && csr.io.rw.cmd === CSR.W) {
-    veto_sticky_reg := csr.io.rw.rdata(0)
+    veto_sticky_reg := csr.io.rw.wdata(0)
   }
 
   veto_iss_unit.io.csr_veto_enable := veto_sticky_reg
@@ -1279,7 +1279,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   sidecar_unit.io.br_update := brupdate
   sidecar_unit.io.veto_enable := reg_veto_enable
   sidecar_unit.io.veto_threshold := reg_veto_threshold
-  veto_restore := sidecar_unit.io.veto_trigger
+  veto_restore := sidecar_unit.io.veto_trigger || io.lsu.veto_restore
   val sidecar_read_port_idx = alu_exe_units.map(_.numIrfReadPorts).sum
   val veto_issue_idx = issueParams.indexWhere(_.iqType == IQ_VETO)
   // sidecar_unit.io.dis_uops <> dispatcher.io.dis_uops(veto_issue_idx)
