@@ -11,10 +11,13 @@ class SidecarMerger(implicit p: Parameters)
     with HasBoomCoreParameters {
   val io = IO(new Bundle {
     val sidecar_res = Flipped(Decoupled(new ExeUnitResp(xLen)))
-    val main_wb_valid = Input(Bool())
-    val br_update = Input(new BrUpdateInfo()) // Required for correctness
+    val main_wb_valid =
+      Input(Bool()) // Keep for IO compatibility, though less critical now
+    val br_update = Input(new BrUpdateInfo())
 
-    val out_wb = Valid(new ExeUnitResp(xLen))
+    // out_wb is repurposed: bits.uop will be used for Re-injection
+    val out_wb = Decoupled(new ExeUnitResp(xLen))
+
     val rob_done = Output(Valid(new Bundle {
       val rob_idx = UInt(robAddrSz.W)
     }))
@@ -22,33 +25,32 @@ class SidecarMerger(implicit p: Parameters)
     val buffer_critical = Output(Bool())
   })
 
-  // 1. Result Buffer
+  // 1. Re-injection Buffer
+  // Decouples Sidecar timing from Issue Unit arbitration
   val res_fifo = Module(new Queue(new ExeUnitResp(xLen), 16))
   res_fifo.io.enq <> io.sidecar_res
 
-  // 2. Manual Kill Logic (Avoids the "overloaded method" compiler error)
+  // 2. Kill Logic
+  // Check if the instruction was killed by a mispredict while sitting in this buffer
   val head_uop = res_fifo.io.deq.bits.uop
-  // An instruction is killed if any bit in its mask matches the mispredicted branch mask
-  val head_killed =
-    (io.br_update.b1.mispredict_mask & head_uop.br_mask) =/= 0.U
+  val head_killed = (io.br_update.b1.mispredict_mask & head_uop.br_mask) =/= 0.U
 
-  // 3. The "Steal" Logic
-  // We pop the FIFO if the main ALU is idle OR if the head instruction is dead
-  val can_steal = res_fifo.io.deq.valid && (!io.main_wb_valid || head_killed)
-
-  io.buffer_critical := res_fifo.io.count > 12.U
-
-  // 4. Drive Writeback to PRF
-  // Only valid if we stole the cycle AND the instruction is actually alive
-  io.out_wb.valid := can_steal && !head_killed
+  // 3. Re-injection Logic
+  // We present the instruction to the IssueUnit.
+  // We only signal valid if the instruction is actually alive.
+  io.out_wb.valid := res_fifo.io.deq.valid && !head_killed
   io.out_wb.bits := res_fifo.io.deq.bits
-  // Update mask for downstream logic
+  // Ensure the mask is fully cleared for the main pipeline
   io.out_wb.bits.uop.br_mask := head_uop.br_mask & ~io.br_update.b1.resolve_mask
 
-  // 5. Handshake
-  res_fifo.io.deq.ready := can_steal
+  // 4. Handshake
+  // Pop if the IssueUnit accepts it OR if the branch mispredict killed it
+  res_fifo.io.deq.ready := io.out_wb.ready || head_killed
 
-  // 6. Drive ROB
-  io.rob_done.valid := can_steal && !head_killed
+  // 5. Status & ROB
+  io.buffer_critical := res_fifo.io.count > 12.U
+
+  // Signal to the ROB/Core that this instruction has "exited" the Sidecar phase
+  io.rob_done.valid := io.out_wb.fire
   io.rob_done.bits.rob_idx := head_uop.rob_idx
 }

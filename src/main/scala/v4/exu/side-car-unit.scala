@@ -4,8 +4,6 @@ import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config.Parameters
 import boom.v4.common._
-import freechips.rocketchip.rocket.ALU._
-
 import boom.v4.util._
 
 class SidecarUnit(implicit p: Parameters)
@@ -23,133 +21,58 @@ class SidecarUnit(implicit p: Parameters)
       val rs2_data = Input(UInt(xLen.W))
       val task_queue_head_valid = Output(Bool())
     }
+    // We repurpose sidecar_res to be our Re-injection Port
     val sidecar_res = Decoupled(new ExeUnitResp(xLen))
     val br_update = Input(new BrUpdateInfo())
     val veto_trigger = Output(Bool())
-    // TODO: Sensitivity analysis on veto_threshold
     val veto_threshold = Input(UInt(16.W))
     val veto_enable = Input(Bool())
     val deq_uop = Output(new MicroOp)
     val task_queue_head_valid = Output(Bool())
   })
 
-  // task_queue remains 8 entries, but now feeds our Station
-  val task_queue = Module(new Queue(new MicroOp(), 8, pipe = true, flow = true))
+  // 1. The Holding Pen (FIFO Buffer)
+  // 16 entries to handle the "Burst" release without backpressuring dispatch
+  val task_queue = Module(
+    new Queue(new MicroOp(), 16, pipe = true, flow = true)
+  )
   task_queue.io.enq <> io.dis_uops
 
-  // In-Order Station (2 Entries for HoL Mitigation)
-  val station_uops = Reg(Vec(2, new MicroOp()))
-  val station_valids = RegInit(VecInit(Seq.fill(2)(false.B)))
+  // 2. Head-of-Line Logic
+  val head_uop = task_queue.io.deq.bits
+  val head_valid = task_queue.io.deq.valid
 
-  // Execution Registers (Original Variables)
-  val uop_reg = Reg(new MicroOp())
-  val rs1_reg = Reg(UInt(xLen.W))
-  val rs2_reg = Reg(UInt(xLen.W))
-  val val_reg = RegInit(false.B)
+  // Branch Mask Update: Calculate what the mask WILL be in the next cycle
+  val next_br_mask = GetNewBrMask(io.br_update, head_uop.br_mask)
 
-  // Dependency & HoL Mitigation Logic
-  // If station(0) is stalled on operands, we can't easily skip in this
-  // simplified IO setup, so we treat it as a strict In-Order "Pipeline Station".
+  // An instruction is "Safe" if its branch mask is zeroed out by resolutions
+  val is_safe = head_valid && (next_br_mask === 0.U)
+
+  // An instruction is "Killed" if its mask matches a misprediction
   val op0_killed =
-    (io.br_update.b1.mispredict_mask & station_uops(0).br_mask) =/= 0.U
-  val op0_ready = io.iss_resps.rs1_ready && io.iss_resps.rs2_ready
+    head_valid && ((io.br_update.b1.mispredict_mask & head_uop.br_mask) =/= 0.U)
 
-  // Logic to determine if we can move an instruction into the execution reg
-  val can_execute =
-    station_valids(0) && op0_ready && (!val_reg || io.sidecar_res.ready)
+  // 3. Re-injection Handshake (Repurposing sidecar_res)
+  // We only signal valid if the instruction is Safe and NOT killed.
+  io.sidecar_res.valid := is_safe && !op0_killed
+  io.sidecar_res.bits.uop := head_uop
+  io.sidecar_res.bits.uop.br_mask := 0.U // Strip the mask; it is now non-speculative
+  io.sidecar_res.bits.data := 0.U // No data needed; main ALU will compute it
 
-  // Branch Mask Update
-  val next_br_mask = GetNewBrMask(io.br_update, uop_reg.br_mask)
+  // Handshake Logic:
+  // Pop the queue if the Core accepted the re-injection OR if the instruction was killed.
+  task_queue.io.deq.ready := (io.sidecar_res.ready && is_safe) || op0_killed
 
-  when(can_execute) {
-    uop_reg := station_uops(0)
-    uop_reg.br_mask := GetNewBrMask(io.br_update, station_uops(0).br_mask)
-    rs1_reg := io.iss_resps.rs1_data
-    rs2_reg := io.iss_resps.rs2_data
-    val_reg := !op0_killed
-  }.elsewhen(val_reg) {
-    uop_reg.br_mask := next_br_mask
-    // Clear reg if it completes or is killed by a branch
-    when(
-      io.sidecar_res.ready || (io.br_update.b1.mispredict_mask & uop_reg.br_mask) =/= 0.U
-    ) {
-      val_reg := false.B
-    }
-  }
+  // 4. Output Wiring for Metadata Compatibility
+  io.task_queue_head_valid := head_valid
+  io.iss_resps.task_queue_head_valid := head_valid
+  io.deq_uop := head_uop
 
-  // Station Management (Shift Logic)
-  task_queue.io.deq.ready := !station_valids(0) || (!station_valids(
-    1
-  ) && can_execute)
-
-  when(reset.asBool || io.br_update.b1.mispredict_mask =/= 0.U) {
-    station_valids.foreach(_ := false.B)
-  }.otherwise {
-    when(can_execute) {
-      // Shift: station(1) moves to (0), Queue moves to (1)
-      station_valids(0) := station_valids(
-        1
-      ) && !((io.br_update.b1.mispredict_mask & station_uops(
-        1
-      ).br_mask) =/= 0.U)
-      station_uops(0) := station_uops(1)
-      station_valids(
-        1
-      ) := task_queue.io.deq.valid && !((io.br_update.b1.mispredict_mask & task_queue.io.deq.bits.br_mask) =/= 0.U)
-      station_uops(1) := task_queue.io.deq.bits
-    }.elsewhen(!station_valids(0)) {
-      // Fill empty slot 0
-      station_valids(0) := task_queue.io.deq.valid
-      station_uops(0) := task_queue.io.deq.bits
-      station_valids(1) := false.B
-    }.elsewhen(!station_valids(1)) {
-      // Fill empty slot 1
-      station_valids(1) := task_queue.io.deq.valid
-      station_uops(1) := task_queue.io.deq.bits
-    }
-    // Update masks for instructions sitting in the station
-    station_uops(0).br_mask := GetNewBrMask(
-      io.br_update,
-      station_uops(0).br_mask
-    )
-    station_uops(1).br_mask := GetNewBrMask(
-      io.br_update,
-      station_uops(1).br_mask
-    )
-  }
-
-  // ALU unit
-  // Only supports ADD, SUB, AND, OR, XOR
-  val alu_out = MuxLookup(uop_reg.fcn_op, rs1_reg + rs2_reg)(
-    Seq(
-      FN_ADD -> (rs1_reg + rs2_reg),
-      FN_SUB -> (rs1_reg - rs2_reg),
-      FN_AND -> (rs1_reg & rs2_reg),
-      FN_OR -> (rs1_reg | rs2_reg),
-      FN_XOR -> (rs1_reg ^ rs2_reg)
-    )
-  )
-
-  val final_alu_out =
-    Mux(uop_reg.fcn_dw === DW_64, alu_out, alu_out(31, 0).asSInt.asUInt)
-
-  // Output Wiring (Same Variables)
-  io.task_queue_head_valid := station_valids(0)
-  io.iss_resps.task_queue_head_valid := station_valids(0) // Internal check
-
-  io.sidecar_res.valid := val_reg && !((io.br_update.b1.mispredict_mask & uop_reg.br_mask) =/= 0.U)
-  io.sidecar_res.bits.uop := uop_reg
-  io.sidecar_res.bits.uop.br_mask := next_br_mask
-  io.sidecar_res.bits.data := final_alu_out
-
-  io.deq_uop := station_uops(0)
-
-  // Veto Logic (Inhibition Counter)
+  // 5. Veto Logic (Inhibition Counter)
   val veto_counter = RegInit(0.U(16.W))
 
-  // We veto if station(0) is valid but cannot move because of dependencies
-  // or because the execution register is stalled.
-  val is_stalled = station_valids(0) && !can_execute && !op0_killed
+  // Stall occurs when the head is valid but is still speculative (not safe) and not yet killed
+  val is_stalled = head_valid && !is_safe && !op0_killed
 
   when(is_stalled && io.veto_enable) {
     veto_counter := veto_counter + 1.U
