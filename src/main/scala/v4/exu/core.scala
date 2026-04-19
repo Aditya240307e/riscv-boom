@@ -45,6 +45,7 @@ import boom.v4.ifu.{GlobalHistory, HasBoomFrontendParameters}
 import boom.v4.util._
 import freechips.rocketchip.util.SeqToAugmentedSeq
 import boom.v3.common
+import freechips.rocketchip.regmapper.RegField.w
 
 /** Top level core object that connects the Frontend to the rest of the
   * pipeline.
@@ -439,6 +440,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   custom_csrs.csrs.foreach { c =>
     c.stall := false.B; c.set := false.B; c.sdata := DontCare
   }
+  custom_csrs.csrs(0).value := veto_sticky_reg
   (custom_csrs.csrs zip csr.io.customCSRs).map { case (lhs, rhs) => lhs <> rhs }
   io.ifu.enable_bpd := custom_csrs.enableBPD
 

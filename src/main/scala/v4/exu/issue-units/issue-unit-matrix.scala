@@ -14,6 +14,8 @@ import freechips.rocketchip.util.Str
 
 import boom.v4.common._
 import boom.v4.util._
+import freechips.rocketchip.rocket.Instructions.FCVT_LU_D
+import boom.v3.exu.FUConstants.FU_X
 
 class IssueUnitAgeMatrix(
     params: IssueParams,
@@ -24,9 +26,30 @@ class IssueUnitAgeMatrix(
   // Set up the dispatch uops
   // special case "storing" 2 uops within one issue slot.
 
+  val dis_arb = Module(new Arbiter(new MicroOp, 3))
+  dis_arb.io.in(0) <> io.sidecar_reinject_0
+  dis_arb.io.in(1) <> io.sidecar_reinject_1
+  dis_arb.io.in(2) <> io.dis_uops(0)
+  val primary_uop = dis_arb.io.out.bits
+  val primary_valid = dis_arb.io.out.valid
+  val is_load = primary_uop.fu_code(FC_AGEN)
+  val is_miss_proxy = (io.child_rebusys =/= 0.U)
+
+  val is_veto_uop =
+    primary_uop.is_tainted && io.csr_veto_enable && (is_load && is_miss_proxy || primary_uop.is_br)
+
+  val matrix_ready = Wire(Bool())
+  dis_arb.io.out.ready := Mux(
+    is_veto_uop,
+    io.sidecar_dis_uop.ready,
+    matrix_ready
+  )
+
+  io.sidecar_dis_uop.valid := primary_valid && is_veto_uop
+  io.sidecar_dis_uop.bits := primary_uop
   val dis_uops = Array.fill(dispatchWidth) { Wire(new MicroOp()) }
   for (w <- 0 until dispatchWidth) {
-    dis_uops(w) := io.dis_uops(w).bits
+    dis_uops(w) := primary_uop
     dis_uops(w).iw_issued := false.B
     dis_uops(w).iw_issued_partial_agen := false.B
     dis_uops(w).iw_issued_partial_dgen := false.B
@@ -38,13 +61,13 @@ class IssueUnitAgeMatrix(
     val data_wakeup_ports = io.wakeup_ports.take(3)
 
     val prs1_matches = data_wakeup_ports.map { wu =>
-      wu.bits.uop.pdst === io.dis_uops(w).bits.prs1
+      wu.bits.uop.pdst === primary_uop.prs1
     }
     val prs2_matches = data_wakeup_ports.map { wu =>
-      wu.bits.uop.pdst === io.dis_uops(w).bits.prs2
+      wu.bits.uop.pdst === primary_uop.prs2
     }
     val prs3_matches = data_wakeup_ports.map { wu =>
-      wu.bits.uop.pdst === io.dis_uops(w).bits.prs3
+      wu.bits.uop.pdst === primary_uop.prs3
     }
 
     val prs1_wakeups = (data_wakeup_ports zip prs1_matches).map {
@@ -83,7 +106,7 @@ class IssueUnitAgeMatrix(
         .bits
         .iw_p1_speculative_child) =/= 0.U)
     ) {
-      dis_uops(w).prs1_busy := io.dis_uops(w).bits.lrs1_rtype === RT_FIX
+      dis_uops(w).prs1_busy := primary_uop.lrs1_rtype === RT_FIX
     }
     when(prs2_wakeups.reduce(_ || _)) {
       dis_uops(w).prs2_busy := false.B
@@ -100,7 +123,7 @@ class IssueUnitAgeMatrix(
         .bits
         .iw_p2_speculative_child) =/= 0.U)
     ) {
-      dis_uops(w).prs2_busy := io.dis_uops(w).bits.lrs2_rtype === RT_FIX
+      dis_uops(w).prs2_busy := primary_uop.lrs2_rtype === RT_FIX
     }
 
     when(prs3_wakeups.reduce(_ || _)) {
@@ -197,11 +220,8 @@ class IssueUnitAgeMatrix(
     VecInit.fill(dispatchWidth)(0.U(log2Ceil(numIssueSlots).W))
   )
   val dis_valids = (0 until dispatchWidth).map(i =>
-    io.dis_uops(i).valid && !dis_uops(i).exception && !dis_uops(
-      i
-    ).is_fence && !dis_uops(i).is_fencei
+    primary_valid && !is_veto_uop && !primary_uop.exception && !primary_uop.is_fence && !primary_uop.is_fencei
   )
-
   var dis_scan = 0.U
   for (i <- 0 until numIssueSlots) {
     when(dis_scan < dispatchWidth.U && slots_empty(i)) {
@@ -215,19 +235,24 @@ class IssueUnitAgeMatrix(
     )
   }
 
+  matrix_ready := dis_readys(0)
+
+  io.sidecar_reinject_0.ready := dis_arb.io.in(0).ready
+  io.sidecar_reinject_1.ready := dis_arb.io.in(1).ready
+
+  for (i <- 0 until dispatchWidth) {
+    io.dis_uops(i).ready := dis_arb.io.in(2).ready
+  }
+
   for (w <- 0 until numIssueSlots) {
     issue_slots(w).in_uop.valid := false.B
     issue_slots(w).in_uop.bits := DontCare
-    for (i <- 0 until dispatchWidth) {
-      io.dis_uops(i).ready := dis_readys(i)
-      // when (dis_valids(i) && dis_readys(i) && (dis_indices(i) === w.U)) {
-      //   issue_slots(w).in_uop.valid := true.B
-      //   issue_slots(w).in_uop.bits  := dis_uops(i)
-      // }
-      when(dis_valids(i) && dis_readys(i)) {
-        issue_slots(dis_indices(i)).in_uop.valid := true.B
-        issue_slots(dis_indices(i)).in_uop.bits := dis_uops(i)
-      }
+  }
+
+  for (i <- 0 until dispatchWidth) {
+    when(dis_valids(i) && dis_readys(i)) {
+      issue_slots(dis_indices(i)).in_uop.valid := true.B
+      issue_slots(dis_indices(i)).in_uop.bits := dis_uops(i)
     }
   }
 
@@ -238,7 +263,7 @@ class IssueUnitAgeMatrix(
   )
 
   val slots_issue = VecInit(
-    (0 until dispatchWidth).map(i => io.dis_uops(i).valid)
+    (0 until dispatchWidth).map(i => primary_valid && !is_veto_uop)
   )
 
   val slots_valids = WireDefault(VecInit(slots.map(_.io.valid)))
@@ -279,8 +304,10 @@ class IssueUnitAgeMatrix(
         }
         .reduce(_ || _)
 
+      val is_vetoed = io.csr_veto_enable && issue_slots(j).iss_uop.is_tainted
+
       //     val fu_code_match = (io.fu_types(i).asUInt & issue_slots(j).iss_uop.fu_code.asUInt).orR
-      iss_ready(i)(j) := fu_code_match & issue_slots(j).request
+      iss_ready(i)(j) := fu_code_match & issue_slots(j).request && !is_vetoed
     }
   }
 

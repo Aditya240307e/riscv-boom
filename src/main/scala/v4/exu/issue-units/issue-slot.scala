@@ -169,14 +169,15 @@ class IssueSlot(val numWakeupPorts: Int, val isMem: Boolean, val isFp: Boolean)(
     next_uop.ppred_busy := false.B
   }
 
+  val is_vetoed = io.csr_veto_enable && slot_uop.is_tainted
   val iss_ready =
-    !slot_uop.prs1_busy && !slot_uop.prs2_busy && !(slot_uop.ppred_busy && enableSFBOpt.B) && !(slot_uop.prs3_busy && isFp.B) && !veto_signal
+    !slot_uop.prs1_busy && !slot_uop.prs2_busy && !(slot_uop.ppred_busy && enableSFBOpt.B) && !(slot_uop.prs3_busy && isFp.B) && !veto_signal && !is_vetoed
   val agen_ready = (slot_uop.fu_code(
     FC_AGEN
-  ) && !slot_uop.prs1_busy && !(slot_uop.ppred_busy && enableSFBOpt.B) && isMem.B)
+  ) && !slot_uop.prs1_busy && !(slot_uop.ppred_busy && enableSFBOpt.B) && isMem.B && !is_vetoed)
   val dgen_ready = (slot_uop.fu_code(
     FC_DGEN
-  ) && !slot_uop.prs2_busy && !(slot_uop.ppred_busy && enableSFBOpt.B) && isMem.B)
+  ) && !slot_uop.prs2_busy && !(slot_uop.ppred_busy && enableSFBOpt.B) && isMem.B && !is_vetoed)
 
   io.request := slot_valid && !slot_uop.iw_issued && (
     iss_ready || agen_ready || dgen_ready
@@ -184,12 +185,20 @@ class IssueSlot(val numWakeupPorts: Int, val isMem: Boolean, val isFp: Boolean)(
 
   io.iss_uop := slot_uop
 
+  val is_now_safe =
+    (next_uop.br_mask === 0.U) && !io.brupdate.b1.mispredict_mask.orR
+  when(slot_valid && slot_uop.is_tainted && is_now_safe) {
+    next_uop.is_tainted := false.B
+  }
+
   // Update state for current micro-op based on grant
 
+  val can_issue =
+    io.grant && !io.squash_grant && !(io.csr_veto_enable && slot_uop.is_tainted)
   next_uop.iw_issued := false.B
   next_uop.iw_issued_partial_agen := false.B
   next_uop.iw_issued_partial_dgen := false.B
-  when(io.grant && !io.squash_grant) {
+  when(can_issue) {
     next_uop.iw_issued := true.B
   }
 

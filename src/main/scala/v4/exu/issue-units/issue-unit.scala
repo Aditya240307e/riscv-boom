@@ -42,6 +42,11 @@ abstract class IssueUnit(
 
   val io = IO(new Bundle {
     val dis_uops = Vec(dispatchWidth, Flipped(Decoupled(new MicroOp)))
+    val sidecar_reinject_0 = Flipped(Decoupled(new MicroOp))
+    val sidecar_reinject_1 = Flipped(Decoupled(new MicroOp))
+    val sidecar_dis_uop = Decoupled(new MicroOp)
+    val sidecar_buffer_critical = Input(Bool())
+    val l1_miss = Input(Bool())
 
     val iss_uops = Output(Vec(issueWidth, Valid(new MicroOp())))
     val wakeup_ports = Flipped(Vec(numWakeupPorts + 1, Valid(new Wakeup)))
@@ -71,6 +76,7 @@ abstract class IssueUnit(
     else if (iqType == IQ_MEM) "mem"
     else if (iqType == IQ_FP) " fp"
     else if (iqType == IQ_UNQ) "unique"
+    else if (iqType == IQ_VETO) "VETO"
     else "unknown"
 }
 

@@ -1847,7 +1847,7 @@ object DecodeTables
       Y,
       Y,
       N,
-      fc2oh(FC_AGEN),
+      fc2oh(FC_ALU),
       RT_FIX,
       RT_FIX,
       RT_FIX,
@@ -1856,7 +1856,7 @@ object DecodeTables
       Y,
       N,
       N,
-      M_XRD,
+      M_X,
       N,
       N,
       CSR.N,
@@ -8620,6 +8620,7 @@ class DecodeUnit(implicit p: Parameters)
   uop.mem_signed := !inst(14)
   uop.uses_ldq := cs.uses_ldq
   uop.uses_stq := cs.uses_stq
+  uop.is_tainted := cs.is_tainted
   uop.is_amo := cs.is_amo
   uop.is_fence := inst === FENCE
   uop.is_fencei := inst === FENCE_I
