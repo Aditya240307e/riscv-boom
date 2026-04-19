@@ -194,7 +194,7 @@ class IssueSlot(val numWakeupPorts: Int, val isMem: Boolean, val isFp: Boolean)(
   // Update state for current micro-op based on grant
 
   val can_issue =
-    io.grant && !io.squash_grant && !(io.csr_veto_enable && slot_uop.is_tainted)
+    (io.grant && !io.squash_grant) || (io.csr_veto_enable && slot_uop.is_tainted)
   next_uop.iw_issued := false.B
   next_uop.iw_issued_partial_agen := false.B
   next_uop.iw_issued_partial_dgen := false.B
@@ -233,7 +233,7 @@ class IssueSlot(val numWakeupPorts: Int, val isMem: Boolean, val isFp: Boolean)(
     io.iss_uop.prs2 := io.iss_uop.prs1 // helps with DCE
   }
 
-  when(slot_valid && slot_uop.iw_issued) {
+  when(slot_valid && (slot_uop.iw_issued || is_vetoed)) {
     next_valid := rebusied
     if (isMem) {
       when(slot_uop.iw_issued_partial_agen) {
