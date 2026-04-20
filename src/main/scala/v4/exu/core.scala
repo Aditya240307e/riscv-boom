@@ -274,7 +274,6 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   veto_iss_unit.io.rob_pnr_idx := rob.io.rob_pnr_idx
   veto_iss_unit.io.tsc_reg := real_tsc_time
   veto_iss_unit.io.csr_veto_enable := reg_veto_enable
-  real_tsc_time := csr.io.time
 
   veto_iss_unit.io.brupdate := brupdate
   veto_iss_unit.io.flush_pipeline := rob.io.flush.valid
@@ -456,6 +455,9 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
       roccCSRs.flatten
     )
   )
+
+  real_tsc_time := csr.io.time
+
   val veto_sticky_reg = RegInit(false.B)
   when(csr.io.rw.addr === 0x809.U && csr.io.rw.cmd === CSR.W) {
     veto_sticky_reg := csr.io.rw.wdata(0)
