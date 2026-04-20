@@ -155,10 +155,15 @@ class FpPipeline(implicit p: Parameters)
   // -------------------------------------------------------------
 
   // Tie off the Veto/Sidecar signals for the FP Issue Unit
+  // We use DontCare for the Outputs and false.B for the Inputs
   issue_unit.io.sidecar_dis_uop.valid := false.B
   issue_unit.io.sidecar_dis_uop.bits := DontCare
+
+  // These are usually Decoupled/Ready signals.
+  // If the error persists, try changing := to <> DontCare
   issue_unit.io.sidecar_reinject_0.ready := false.B
   issue_unit.io.sidecar_reinject_1.ready := false.B
+
   issue_unit.io.sidecar_buffer_critical := false.B
   issue_unit.io.l1_miss := false.B
 
