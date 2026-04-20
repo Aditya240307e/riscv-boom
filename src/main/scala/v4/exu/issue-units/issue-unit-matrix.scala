@@ -26,6 +26,17 @@ class IssueUnitAgeMatrix(
   // Set up the dispatch uops
   // special case "storing" 2 uops within one issue slot.
 
+  io.iss_uops.foreach { u =>
+    u.valid := false.B
+    u.bits := DontCare
+  }
+  io.sidecar_dis_uop.valid := false.B
+  io.sidecar_dis_uop.bits := DontCare
+  io.sidecar_reinject_0.ready := false.B
+  io.sidecar_reinject_1.ready := false.B
+  // This satisfies the "not fully initialized" errors for the new wakeup bits
+  io.wakeup_ports.foreach(_ := DontCare)
+  // -------------------------------
   val dis_arb = Module(new Arbiter(new MicroOp, 3))
   dis_arb.io.in(0) <> io.sidecar_reinject_0
   dis_arb.io.in(1) <> io.sidecar_reinject_1
