@@ -233,7 +233,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     Vec(fp_pipeline.io.wakeups.length, Valid(new Wakeup))
   )
 
-  for (i <- 0 until numVetoWakeups) { // FIXME: SHOULD IT BE numVetoWakeups instead of fp_pipeline.io.wakeups.length????
+  for (i <- 0 until fp_wakeup_shadow.length) { // FIXME: SHOULD IT BE numVetoWakeups instead of fp_pipeline.io.wakeups.length????
     val wake_valid = int_wakeups(i).valid
     val is_tainted = int_wakeups(i).bits.is_tainted
     sidecar_unit.io.enq(i).valid := wake_valid && is_tainted
