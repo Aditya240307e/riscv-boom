@@ -154,7 +154,38 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     enableColumnALUIssue,
     enableALUSingleWideDispatch
   )
+
   val veto_iss_unit = IssueUnit(vetoIssueParam, numVetoWakeups, false, false)
+  veto_iss_unit.io.dis_uops <> dispatcher.io.dis_uops(IQ_VETO)
+  for (i <- 0 until numVetoWakeups) {
+    veto_iss_unit.io.wakeup_ports(i) := int_wakeups(i)
+  }
+  veto_iss_unit.io.wakeup_ports(numVetoWakeups).valid := false.B
+  veto_iss_unit.io.wakeup_ports(numVetoWakeups).bits := DontCare
+
+  veto_iss_unit.io.pred_wakeup_port.valid := pred_wakeup.valid
+  veto_iss_unit.io.pred_wakeup_port.bits := pred_wakeup.bits.uop.ftq_idx
+  veto_iss_unit.io.rob_head := rob.io.rob_head_idx
+  veto_iss_unit.io.rob_pnr_idx := rob.io.rob_pnr_idx
+  veto_iss_unit.io.tsc_reg := csr.io.time
+  veto_iss_unit.io.csr_veto_enable := reg_veto_enable
+
+  veto_iss_unit.io.brupdate := brupdate
+  veto_iss_unit.io.flush_pipeline := rob.io.flush.valid
+  veto_iss_unit.io.squash_grant := false.B // Default: change if you have squash logic
+  veto_iss_unit.io.l1_miss := false.B // Connect to LSU miss signal if needed
+  veto_iss_unit.io.child_rebusys := 0.U // Or link to exe_units rebusys
+
+  for (w <- 0 until vetoIssueParam.issueWidth) {
+    veto_iss_unit.io.fu_types(w) := alu_exe_units(w).io_ready_fu_types
+  }
+
+  veto_iss_unit.io.sidecar_reinject_0.valid := false.B
+  veto_iss_unit.io.sidecar_reinject_0.bits := DontCare
+  veto_iss_unit.io.sidecar_reinject_1.valid := false.B
+  veto_iss_unit.io.sidecar_reinject_1.bits := DontCare
+  veto_iss_unit.io.sidecar_buffer_critical := false.B
+
   val dispatcher = Module(new BasicDispatcher)
   dispatcher.io.veto_enable := reg_veto_enable
   val iregfileBankedWriteArray = Seq.fill(lsuWidth + 1) {
@@ -231,7 +262,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     Vec(fp_pipeline.io.wakeups.length, Valid(new Wakeup))
   )
 
-  for (i <- 0 until fp_pipeline.io.wakeups.length) { // FIXME: SHOULD IT BE numVetoWakeups instead of fp_pipeline.io.wakeups.length????
+  for (i <- 0 until numVetoWakeups) { // FIXME: SHOULD IT BE numVetoWakeups instead of fp_pipeline.io.wakeups.length????
     val wake_valid = int_wakeups(i).valid
     val is_tainted = int_wakeups(i).bits.is_tainted
     sidecar_unit.io.enq(i).valid := wake_valid && is_tainted
