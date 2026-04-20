@@ -2654,8 +2654,8 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut)
   }
 
   // When the sidecar result is valid, tell the ROB to "unveto" this instruction
-  io.core.veto_release.valid := io.core.sidecar_res.valid
-  io.core.veto_release.bits.rob_idx := io.core.sidecar_res.rob_idx
+  // io.core.veto_release.valid := io.core.sidecar_res.valid
+  // io.core.veto_release.bits.rob_idx := io.core.sidecar_res.rob_idx
 
 }
 
