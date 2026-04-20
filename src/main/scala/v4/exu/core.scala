@@ -155,6 +155,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     enableALUSingleWideDispatch
   )
 
+  val dispatcher = Module(new BasicDispatcher)
   val veto_iss_unit = IssueUnit(vetoIssueParam, numVetoWakeups, false, false)
   veto_iss_unit.io.dis_uops <> dispatcher.io.dis_uops(IQ_VETO)
   for (i <- 0 until numVetoWakeups) {
@@ -186,7 +187,6 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   veto_iss_unit.io.sidecar_reinject_1.bits := DontCare
   veto_iss_unit.io.sidecar_buffer_critical := false.B
 
-  val dispatcher = Module(new BasicDispatcher)
   dispatcher.io.veto_enable := reg_veto_enable
   val iregfileBankedWriteArray = Seq.fill(lsuWidth + 1) {
     None
