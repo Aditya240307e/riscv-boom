@@ -225,6 +225,8 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     fp_pipeline.io.wakeups(i).bits := DontCare
   } */
 
+  val brupdate = Wire(new BrUpdateInfo)
+
   val fp_wakeup_shadow = Wire(
     Vec(fp_pipeline.io.wakeups.length, Valid(new Wakeup))
   )
@@ -292,7 +294,6 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   // brmask contains masks for rapidly clearing mispredicted instructions
   // brindices contains indices to reset pointers for allocated structures
   //           brindices is delayed a cycle
-  val brupdate = Wire(new BrUpdateInfo)
   val b1 = Wire(new BrUpdateMasks)
   val b2 = Reg(new BrResolutionInfo)
 
@@ -1277,14 +1278,44 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
 
   // XXX: DO THE SENSITIVITY ANALYSIS HERE
 
+  // --- SIDECAR RE-INJECTION FIREWALL ---
+  val reinject_q0 = Module(new Queue(new ExeUnitResp(xLen), entries = 2))
+  val reinject_q1 = Module(new Queue(new ExeUnitResp(xLen), entries = 2))
+
+  // 1. Connect Sidecar Unit -> Sidecar Merger
+  // We use the bulk connection here because the Merger handles the unit's backpressure
   sidecar_merger.io.sidecar_res <> sidecar_unit.io.sidecar_res
+
+  // 2. Connect Sidecar Merger Output -> Firewall Queue 0
+  // This is the missing link! out_wb is the exit port of the merger.
+  reinject_q0.io.enq.valid := sidecar_merger.io.out_wb.valid
+  reinject_q0.io.enq.bits := sidecar_merger.io.out_wb.bits
+  sidecar_merger.io.out_wb.ready := reinject_q0.io.enq.ready
+
+  // 3. Re-inject Firewall Queue 0 -> Issue Unit
+  alu_iss_unit.io.sidecar_reinject_0.valid := reinject_q0.io.deq.valid
+  alu_iss_unit.io.sidecar_reinject_0.bits := DontCare
+  alu_iss_unit.io.sidecar_reinject_0.bits :#= reinject_q0.io.deq.bits.uop
+  reinject_q0.io.deq.ready := alu_iss_unit.io.sidecar_reinject_0.ready
+
+  // 4. Port 1 Tie-off
+  reinject_q1.io.enq.valid := false.B
+  reinject_q1.io.enq.bits := DontCare
+  alu_iss_unit.io.sidecar_reinject_1.valid := reinject_q1.io.deq.valid
+  alu_iss_unit.io.sidecar_reinject_1.bits := DontCare
+  alu_iss_unit.io.sidecar_reinject_1.bits :#= reinject_q1.io.deq.bits.uop
+  reinject_q1.io.deq.ready := alu_iss_unit.io.sidecar_reinject_1.ready
+
+  // 5. Control Logic
+  sidecar_unit.io.dis_uops <> alu_iss_unit.io.sidecar_dis_uop
   sidecar_unit.io.br_update := brupdate
+  sidecar_merger.io.br_update := brupdate // Connect branch info to merger too!
   sidecar_unit.io.veto_enable := reg_veto_enable
   sidecar_unit.io.veto_threshold := reg_veto_threshold
   veto_restore := sidecar_unit.io.veto_trigger || io.lsu.veto_restore
+
   val sidecar_read_port_idx = alu_exe_units.map(_.numIrfReadPorts).sum
   val veto_issue_idx = issueParams.indexWhere(_.iqType == IQ_VETO)
-  // sidecar_unit.io.dis_uops <> dispatcher.io.dis_uops(veto_issue_idx)
 
   iregfile.io
     .arb_read_reqs(sidecar_read_port_idx)
@@ -1313,7 +1344,6 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
     !sidecar_unit.io.deq_uop.prs2_busy
   )
 
-  sidecar_merger.io.sidecar_res <> sidecar_unit.io.sidecar_res
   sidecar_merger.io.br_update := brupdate
 
   // loop through each issue-port (exe_units are statically connected to an issue-port)

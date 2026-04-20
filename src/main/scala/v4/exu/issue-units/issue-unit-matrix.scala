@@ -211,7 +211,9 @@ class IssueUnitAgeMatrix(
   // Dispatch Logic
   // This is the relatively naive (combinatorial) implementation of dispatch logic, where it searches for empty entries and dispatch into it
   val slots_empty = (0 until numIssueSlots).map(i =>
-    !issue_slots(i).will_be_valid && !issue_slots(i).valid
+    (!issue_slots(i).will_be_valid && !issue_slots(
+      i
+    ).valid)
   )
   // dis_valids no exception
   val dis_readys = WireDefault(VecInit.fill(dispatchWidth)(false.B))
@@ -237,12 +239,21 @@ class IssueUnitAgeMatrix(
 
   matrix_ready := dis_readys(0)
 
+  io.sidecar_dis_uop.valid := primary_valid && is_veto_uop
+  io.sidecar_dis_uop.bits := primary_uop
+
   io.sidecar_reinject_0.ready := dis_arb.io.in(0).ready
   io.sidecar_reinject_1.ready := dis_arb.io.in(1).ready
 
   for (i <- 0 until dispatchWidth) {
     io.dis_uops(i).ready := dis_arb.io.in(2).ready
   }
+
+  dis_arb.io.out.ready := Mux(
+    is_veto_uop,
+    io.sidecar_dis_uop.ready,
+    matrix_ready
+  )
 
   for (w <- 0 until numIssueSlots) {
     issue_slots(w).in_uop.valid := false.B
@@ -304,10 +315,8 @@ class IssueUnitAgeMatrix(
         }
         .reduce(_ || _)
 
-      val is_vetoed = io.csr_veto_enable && issue_slots(j).iss_uop.is_tainted
-
       //     val fu_code_match = (io.fu_types(i).asUInt & issue_slots(j).iss_uop.fu_code.asUInt).orR
-      iss_ready(i)(j) := fu_code_match & issue_slots(j).request && !is_vetoed
+      iss_ready(i)(j) := fu_code_match & issue_slots(j).request
     }
   }
 

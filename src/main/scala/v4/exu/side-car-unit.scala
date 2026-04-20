@@ -21,7 +21,6 @@ class SidecarUnit(implicit p: Parameters)
       val rs2_data = Input(UInt(xLen.W))
       val task_queue_head_valid = Output(Bool())
     }
-    // We repurpose sidecar_res to be our Re-injection Port
     val sidecar_res = Decoupled(new ExeUnitResp(xLen))
     val br_update = Input(new BrUpdateInfo())
     val veto_trigger = Output(Bool())
@@ -31,55 +30,90 @@ class SidecarUnit(implicit p: Parameters)
     val task_queue_head_valid = Output(Bool())
   })
 
-  // 1. The Holding Pen (FIFO Buffer)
-  // 16 entries to handle the "Burst" release without backpressuring dispatch
-  val task_queue = Module(
-    new Queue(new MicroOp(), 16, pipe = true, flow = true)
-  )
-  task_queue.io.enq <> io.dis_uops
+  val q_depth = 32
+  val q_uops = Reg(Vec(q_depth, new MicroOp()))
+  val q_val = RegInit(VecInit(Seq.fill(q_depth)(false.B)))
 
-  // 2. Head-of-Line Logic
-  val head_uop = task_queue.io.deq.bits
-  val head_valid = task_queue.io.deq.valid
+  val q_tail = PriorityEncoder(q_val.map(!_) :+ true.B)
+  val q_full = q_val.reduce(_ && _)
 
-  // Branch Mask Update: Calculate what the mask WILL be in the next cycle
+  val head_uop = q_uops(0)
+  val head_valid = q_val(0)
+
   val next_br_mask = GetNewBrMask(io.br_update, head_uop.br_mask)
 
-  // An instruction is "Safe" if its branch mask is zeroed out by resolutions
   val is_safe = head_valid && (next_br_mask === 0.U)
 
-  // An instruction is "Killed" if its mask matches a misprediction
   val op0_killed =
     head_valid && ((io.br_update.b1.mispredict_mask & head_uop.br_mask) =/= 0.U)
 
-  // 3. Re-injection Handshake (Repurposing sidecar_res)
-  // We only signal valid if the instruction is Safe and NOT killed.
+  val do_enq = io.dis_uops.fire
+  val do_deq = (io.sidecar_res.ready && is_safe) || op0_killed
+
+  io.dis_uops.ready := !q_full
   io.sidecar_res.valid := is_safe && !op0_killed
   io.sidecar_res.bits.uop := head_uop
-  io.sidecar_res.bits.uop.br_mask := 0.U // Strip the mask; it is now non-speculative
-  io.sidecar_res.bits.data := 0.U // No data needed; main ALU will compute it
 
-  // Handshake Logic:
-  // Pop the queue if the Core accepted the re-injection OR if the instruction was killed.
-  task_queue.io.deq.ready := (io.sidecar_res.ready && is_safe) || op0_killed
+  // Note: io.sidecar_res.bits.uop.is_tainted is now driven by the registered
+  // value updated in the loop below to ensure timing closure.
 
-  // 4. Output Wiring for Metadata Compatibility
+  io.sidecar_res.bits.uop.br_mask := next_br_mask
+  io.sidecar_res.bits.data := 0.U // Main ALU will compute data
+
+  for (i <- 0 until q_depth) {
+    val current_uop = q_uops(i)
+    val current_val = q_val(i)
+
+    val updated_mask = GetNewBrMask(io.br_update, current_uop.br_mask)
+    val killed =
+      current_val && ((io.br_update.b1.mispredict_mask & current_uop.br_mask) =/= 0.U)
+
+    when(do_deq) {
+      if (i < q_depth - 1) {
+        q_uops(i) := q_uops(i + 1)
+        q_uops(i).br_mask := GetNewBrMask(io.br_update, q_uops(i + 1).br_mask)
+        q_val(i) := q_val(i + 1) && !((io.br_update.b1.mispredict_mask & q_uops(
+          i + 1
+        ).br_mask) =/= 0.U)
+      } else {
+        q_val(i) := false.B
+      }
+    }.elsewhen(do_enq && q_tail === i.U) {
+      q_uops(i) := io.dis_uops.bits
+      q_uops(i).br_mask := GetNewBrMask(io.br_update, io.dis_uops.bits.br_mask)
+      q_val(i) := true.B
+    }.otherwise {
+      q_uops(i).br_mask := updated_mask
+
+      // PRODUCTION SIGN-OFF FIX: Clear the taint bit early in the register state.
+      // This ensures the signal is stable and registered before re-injection.
+      when(updated_mask === 0.U) {
+        q_uops(i).is_tainted := false.B
+      }
+
+      when(killed) { q_val(i) := false.B }
+    }
+  }
+
   io.task_queue_head_valid := head_valid
   io.iss_resps.task_queue_head_valid := head_valid
   io.deq_uop := head_uop
 
-  // 5. Veto Logic (Inhibition Counter)
   val veto_counter = RegInit(0.U(16.W))
 
-  // Stall occurs when the head is valid but is still speculative (not safe) and not yet killed
   val is_stalled = head_valid && !is_safe && !op0_killed
 
   when(is_stalled && io.veto_enable) {
-    veto_counter := veto_counter + 1.U
+    veto_counter := Mux(
+      veto_counter === 0xffff.U,
+      veto_counter,
+      veto_counter + 1.U
+    )
   }.otherwise {
     veto_counter := 0.U
   }
 
-  val timeout_fired = veto_counter > io.veto_threshold
-  io.veto_trigger := timeout_fired && io.veto_enable
+  val timeout_fired =
+    (veto_counter >= io.veto_threshold) && (io.veto_threshold =/= 0.U)
+  io.veto_trigger := timeout_fired && io.veto_enable && head_valid
 }
