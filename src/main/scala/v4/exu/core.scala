@@ -1142,7 +1142,7 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   io.lsu.sidecar_res.address := sidecar_unit.io.sidecar_res.bits.data
   io.lsu.sidecar_res.valid := sidecar_unit.io.sidecar_res.valid
   io.lsu.sidecar_res.rob_idx := sidecar_unit.io.sidecar_res.bits.uop.rob_idx
-  lsu.io.veto_release.valid := rob.io.veto_release.valid
+  io.lsu.veto_release.valid := rob.io.veto_release.valid
   io.lsu.veto_release.bits := rob.io.veto_release.bits
 
   rob.io.latch_shadow := latch_shadow

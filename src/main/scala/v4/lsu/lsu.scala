@@ -149,7 +149,7 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p) {
 
   val brupdate = Input(new BrUpdateInfo)
 
-  val veto_release = Output(Valid(new Bundle {
+  val veto_release = Input(Valid(new Bundle {
     val rob_idx = UInt(robAddrSz.W)
   }))
 
