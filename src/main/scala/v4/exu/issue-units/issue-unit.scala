@@ -69,18 +69,6 @@ abstract class IssueUnit(
     val rob_pnr_idx = Input(UInt(robAddrSz.W))
   })
 
-  io.iss_uops.foreach { u =>
-    u.valid := false.B
-    u.bits := DontCare
-  }
-  io.sidecar_dis_uop.valid := false.B
-  io.sidecar_dis_uop.bits := DontCare
-  io.sidecar_reinject_0.ready := false.B
-  io.sidecar_reinject_1.ready := false.B
-  io.sidecar_buffer_critical := false.B
-  io.l1_miss := false.B
-  io.wakeup_ports.foreach(_ := DontCare)
-
   // -------------------------------------------------------------
 
   def getType: String =

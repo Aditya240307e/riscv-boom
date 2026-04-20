@@ -154,6 +154,20 @@ class FpPipeline(implicit p: Parameters)
   // **** Register Read Stage ****
   // -------------------------------------------------------------
 
+  // Tie off the Veto/Sidecar signals for the FP Issue Unit
+  issue_unit.io.sidecar_dis_uop.valid := false.B
+  issue_unit.io.sidecar_dis_uop.bits := DontCare
+  issue_unit.io.sidecar_reinject_0.ready := false.B
+  issue_unit.io.sidecar_reinject_1.ready := false.B
+  issue_unit.io.sidecar_buffer_critical := false.B
+  issue_unit.io.l1_miss := false.B
+
+  // Tie off any iss_uops that aren't being used by the exe_units
+  // (This handles the "uninitialized" error for units that don't have enough ExeUnits)
+  for (i <- exe_units.length until issue_unit.issueWidth) {
+    issue_unit.io.iss_uops(i).valid := false.B
+    issue_unit.io.iss_uops(i).bits := DontCare
+  }
   rd_idx = 0
   for (unit <- exe_units) {
     unit.io_rrd_frf_bypasses := fp_bypasses
