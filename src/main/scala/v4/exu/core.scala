@@ -267,12 +267,14 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   veto_iss_unit.io.wakeup_ports(numVetoWakeups).valid := false.B
   veto_iss_unit.io.wakeup_ports(numVetoWakeups).bits := DontCare
 
+  val real_tsc_time = Wire(UInt(64.W))
   veto_iss_unit.io.pred_wakeup_port.valid := pred_wakeup.valid
   veto_iss_unit.io.pred_wakeup_port.bits := pred_wakeup.bits.uop.ftq_idx
   veto_iss_unit.io.rob_head := rob.io.rob_head_idx
   veto_iss_unit.io.rob_pnr_idx := rob.io.rob_pnr_idx
-  veto_iss_unit.io.tsc_reg := csr.io.time
+  veto_iss_unit.io.tsc_reg := real_tsc_time
   veto_iss_unit.io.csr_veto_enable := reg_veto_enable
+  real_tsc_time := csr.io.time
 
   veto_iss_unit.io.brupdate := brupdate
   veto_iss_unit.io.flush_pipeline := rob.io.flush.valid
