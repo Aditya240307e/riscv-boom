@@ -183,6 +183,7 @@ trait HasImmrfReadPort { this: ExecutionUnit =>
   assert(io_arb_immrf_req.ready)
   val io_rrd_immrf_resp = IO(Input(UInt(xLen.W)))
   val io_rrd_immrf_wakeup = IO(Output(Valid(new Wakeup)))
+  io_rrd_immrf_wakeup.bits.is_tainted := rrd_uop.bits.is_tainted
 
   io_arb_immrf_req.valid := (arb_uop.valid &&
     !arb_uop.bits.imm_sel.isOneOf(IS_N, IS_SH))
@@ -584,6 +585,7 @@ class ALUExeUnit(
   io_fast_wakeup.bits.speculative_mask := (1 << id).U
   io_fast_wakeup.bits.rebusy := false.B
   io_fast_wakeup.bits.bypassable := true.B
+  io_fast_wakeup.bits.is_tainted := io_iss_uop.bits.is_tainted
 
   val io_fast_pred_wakeup = IO(Output(Valid(new Wakeup)))
   io_fast_pred_wakeup.valid := rrd_uop.valid && rrd_uop.bits.is_sfb_br
@@ -591,6 +593,7 @@ class ALUExeUnit(
   io_fast_pred_wakeup.bits.speculative_mask := 0.U
   io_fast_pred_wakeup.bits.rebusy := false.B
   io_fast_pred_wakeup.bits.bypassable := false.B
+  io_fast_pred_wakeup.bits.is_tainted := rrd_uop.bits.is_tainted
 
   val io_squash_iss = IO(Output(Bool()))
 
@@ -704,6 +707,9 @@ class FPExeUnit(val hasFDiv: Boolean = false, val hasFpiu: Boolean = false)(
   fast_wakeups(0).bits.speculative_mask := 0.U
   fast_wakeups(0).bits.rebusy := false.B
   fast_wakeups(0).bits.bypassable := true.B
+  fast_wakeups(
+    0
+  ).bits.is_tainted := false.B // FPU usually doesn't propagate taint in early research stages
   for (i <- 0 until fastWakeupLatency) {
     fast_wakeups(i + 1) := RegNext(
       UpdateBrMask(io_brupdate, io_kill, fast_wakeups(i))
