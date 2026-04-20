@@ -156,36 +156,6 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   )
 
   val dispatcher = Module(new BasicDispatcher)
-  val veto_iss_unit = IssueUnit(vetoIssueParam, numVetoWakeups, false, false)
-  veto_iss_unit.io.dis_uops <> dispatcher.io.dis_uops(IQ_VETO)
-  for (i <- 0 until numVetoWakeups) {
-    veto_iss_unit.io.wakeup_ports(i) := int_wakeups(i)
-  }
-  veto_iss_unit.io.wakeup_ports(numVetoWakeups).valid := false.B
-  veto_iss_unit.io.wakeup_ports(numVetoWakeups).bits := DontCare
-
-  veto_iss_unit.io.pred_wakeup_port.valid := pred_wakeup.valid
-  veto_iss_unit.io.pred_wakeup_port.bits := pred_wakeup.bits.uop.ftq_idx
-  veto_iss_unit.io.rob_head := rob.io.rob_head_idx
-  veto_iss_unit.io.rob_pnr_idx := rob.io.rob_pnr_idx
-  veto_iss_unit.io.tsc_reg := csr.io.time
-  veto_iss_unit.io.csr_veto_enable := reg_veto_enable
-
-  veto_iss_unit.io.brupdate := brupdate
-  veto_iss_unit.io.flush_pipeline := rob.io.flush.valid
-  veto_iss_unit.io.squash_grant := false.B // Default: change if you have squash logic
-  veto_iss_unit.io.l1_miss := false.B // Connect to LSU miss signal if needed
-  veto_iss_unit.io.child_rebusys := 0.U // Or link to exe_units rebusys
-
-  for (w <- 0 until vetoIssueParam.issueWidth) {
-    veto_iss_unit.io.fu_types(w) := alu_exe_units(w).io_ready_fu_types
-  }
-
-  veto_iss_unit.io.sidecar_reinject_0.valid := false.B
-  veto_iss_unit.io.sidecar_reinject_0.bits := DontCare
-  veto_iss_unit.io.sidecar_reinject_1.valid := false.B
-  veto_iss_unit.io.sidecar_reinject_1.bits := DontCare
-  veto_iss_unit.io.sidecar_buffer_critical := false.B
 
   dispatcher.io.veto_enable := reg_veto_enable
   val iregfileBankedWriteArray = Seq.fill(lsuWidth + 1) {
@@ -243,6 +213,37 @@ class BoomCore(roccCSRs: Seq[Seq[CustomCSR]])(implicit p: Parameters)
   rob.io.veto_restore := veto_restore
   // Used to wakeup registers in rename and issue. ROB needs to listen to something else.
   val int_wakeups = Wire(Vec(numVetoWakeups, Valid(new Wakeup)))
+  val veto_iss_unit = IssueUnit(vetoIssueParam, numVetoWakeups, false, false)
+  veto_iss_unit.io.dis_uops <> dispatcher.io.dis_uops(IQ_VETO)
+  for (i <- 0 until numVetoWakeups) {
+    veto_iss_unit.io.wakeup_ports(i) := int_wakeups(i)
+  }
+  veto_iss_unit.io.wakeup_ports(numVetoWakeups).valid := false.B
+  veto_iss_unit.io.wakeup_ports(numVetoWakeups).bits := DontCare
+
+  veto_iss_unit.io.pred_wakeup_port.valid := pred_wakeup.valid
+  veto_iss_unit.io.pred_wakeup_port.bits := pred_wakeup.bits.uop.ftq_idx
+  veto_iss_unit.io.rob_head := rob.io.rob_head_idx
+  veto_iss_unit.io.rob_pnr_idx := rob.io.rob_pnr_idx
+  veto_iss_unit.io.tsc_reg := csr.io.time
+  veto_iss_unit.io.csr_veto_enable := reg_veto_enable
+
+  veto_iss_unit.io.brupdate := brupdate
+  veto_iss_unit.io.flush_pipeline := rob.io.flush.valid
+  veto_iss_unit.io.squash_grant := false.B // Default: change if you have squash logic
+  veto_iss_unit.io.l1_miss := false.B // Connect to LSU miss signal if needed
+  veto_iss_unit.io.child_rebusys := 0.U // Or link to exe_units rebusys
+
+  for (w <- 0 until vetoIssueParam.issueWidth) {
+    veto_iss_unit.io.fu_types(w) := alu_exe_units(w).io_ready_fu_types
+  }
+
+  veto_iss_unit.io.sidecar_reinject_0.valid := false.B
+  veto_iss_unit.io.sidecar_reinject_0.bits := DontCare
+  veto_iss_unit.io.sidecar_reinject_1.valid := false.B
+  veto_iss_unit.io.sidecar_reinject_1.bits := DontCare
+  veto_iss_unit.io.sidecar_buffer_critical := false.B
+
   for (w <- int_wakeups) {
     when(veto_restore) { w.valid := false.B }
   }
